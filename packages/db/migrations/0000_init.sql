@@ -227,7 +227,11 @@ CREATE TABLE "fleetcare"."vehicles" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "vehicles_tenant_id_uq" UNIQUE("tenant_id","id"),
-	CONSTRAINT "vehicles_odometer_ck" CHECK ("fleetcare"."vehicles"."odometer_km" >= 0 and "fleetcare"."vehicles"."initial_odometer_km" >= 0)
+	CONSTRAINT "vehicles_odometer_ck" CHECK ("fleetcare"."vehicles"."odometer_km" >= 0 and "fleetcare"."vehicles"."initial_odometer_km" >= 0),
+	CONSTRAINT "vehicles_codes_ck" CHECK (regexp_replace(upper("fleetcare"."vehicles"."internal_code"), '[^A-Z0-9]', '', 'g') <> ''
+          and regexp_replace(upper("fleetcare"."vehicles"."plate"), '[^A-Z0-9]', '', 'g') <> ''
+          and ("fleetcare"."vehicles"."fuel_vehicle_code" is null
+               or regexp_replace(upper("fleetcare"."vehicles"."fuel_vehicle_code"), '[^A-Z0-9]', '', 'g') <> ''))
 );
 --> statement-breakpoint
 CREATE TABLE "fleetcare"."equipment" (
@@ -287,7 +291,7 @@ CREATE TABLE "fleetcare"."equipment_types" (
 CREATE TABLE "fleetcare"."accidents" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"tenant_id" uuid NOT NULL,
-	"number" text NOT NULL,
+	"number" text DEFAULT '' NOT NULL,
 	"vehicle_id" uuid NOT NULL,
 	"occurred_at" timestamp with time zone NOT NULL,
 	"location" text,
@@ -317,7 +321,7 @@ CREATE TABLE "fleetcare"."accidents" (
 CREATE TABLE "fleetcare"."maintenance_jobs" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"tenant_id" uuid NOT NULL,
-	"number" text NOT NULL,
+	"number" text DEFAULT '' NOT NULL,
 	"vehicle_id" uuid,
 	"equipment_id" uuid,
 	"supplier_id" uuid,
@@ -396,7 +400,9 @@ CREATE TABLE "fleetcare"."deadline_rules" (
 	"ownership_kinds" "fleetcare"."ownership_kind"[],
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "deadline_rules_target_ck" CHECK (("fleetcare"."deadline_rules"."vehicle_category" is not null) <> ("fleetcare"."deadline_rules"."equipment_type_id" is not null)),
-	CONSTRAINT "deadline_rules_interval_ck" CHECK (not ("fleetcare"."deadline_rules"."interval_months" is not null and "fleetcare"."deadline_rules"."interval_days" is not null))
+	CONSTRAINT "deadline_rules_interval_ck" CHECK (not ("fleetcare"."deadline_rules"."interval_months" is not null and "fleetcare"."deadline_rules"."interval_days" is not null)),
+	CONSTRAINT "deadline_rules_values_ck" CHECK ("fleetcare"."deadline_rules"."interval_months" > 0 and "fleetcare"."deadline_rules"."interval_days" > 0 and "fleetcare"."deadline_rules"."interval_km" > 0
+          and "fleetcare"."deadline_rules"."alert_days" >= 0 and "fleetcare"."deadline_rules"."alert_km" >= 0)
 );
 --> statement-breakpoint
 CREATE TABLE "fleetcare"."deadline_types" (
@@ -412,6 +418,7 @@ CREATE TABLE "fleetcare"."deadline_types" (
 	"interval_km" integer,
 	"month_end" boolean DEFAULT false NOT NULL,
 	"renew_from_due" boolean DEFAULT false NOT NULL,
+	"renew_grace_days" integer,
 	"alert_days" integer DEFAULT 30 NOT NULL,
 	"alert_km" integer,
 	"blocking" boolean DEFAULT false NOT NULL,
@@ -423,7 +430,10 @@ CREATE TABLE "fleetcare"."deadline_types" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "deadline_types_tenant_id_uq" UNIQUE("tenant_id","id"),
-	CONSTRAINT "deadline_types_interval_ck" CHECK (not ("fleetcare"."deadline_types"."interval_months" is not null and "fleetcare"."deadline_types"."interval_days" is not null))
+	CONSTRAINT "deadline_types_interval_ck" CHECK (not ("fleetcare"."deadline_types"."interval_months" is not null and "fleetcare"."deadline_types"."interval_days" is not null)),
+	CONSTRAINT "deadline_types_values_ck" CHECK ("fleetcare"."deadline_types"."interval_months" > 0 and "fleetcare"."deadline_types"."interval_days" > 0 and "fleetcare"."deadline_types"."interval_km" > 0
+          and "fleetcare"."deadline_types"."alert_days" >= 0 and "fleetcare"."deadline_types"."alert_km" >= 0 and "fleetcare"."deadline_types"."renew_grace_days" >= 0),
+	CONSTRAINT "deadline_types_crew_renew_ck" CHECK (not ("fleetcare"."deadline_types"."completed_by_crew" and "fleetcare"."deadline_types"."renew_from_due"))
 );
 --> statement-breakpoint
 CREATE TABLE "fleetcare"."deadlines" (
@@ -441,6 +451,8 @@ CREATE TABLE "fleetcare"."deadlines" (
 	"blocking" boolean,
 	"due_on" date,
 	"due_km" integer,
+	"base_due_on" date,
+	"base_due_km" integer,
 	"last_done_on" date,
 	"last_done_km" integer,
 	"archived_at" timestamp with time zone,
@@ -449,7 +461,9 @@ CREATE TABLE "fleetcare"."deadlines" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "deadlines_tenant_id_uq" UNIQUE("tenant_id","id"),
 	CONSTRAINT "deadlines_subject_ck" CHECK (("fleetcare"."deadlines"."vehicle_id" is not null) <> ("fleetcare"."deadlines"."equipment_id" is not null)),
-	CONSTRAINT "deadlines_interval_ck" CHECK (not ("fleetcare"."deadlines"."interval_months" is not null and "fleetcare"."deadlines"."interval_days" is not null))
+	CONSTRAINT "deadlines_interval_ck" CHECK (not ("fleetcare"."deadlines"."interval_months" is not null and "fleetcare"."deadlines"."interval_days" is not null)),
+	CONSTRAINT "deadlines_values_ck" CHECK ("fleetcare"."deadlines"."interval_months" > 0 and "fleetcare"."deadlines"."interval_days" > 0 and "fleetcare"."deadlines"."interval_km" > 0
+          and "fleetcare"."deadlines"."alert_days" >= 0 and "fleetcare"."deadlines"."alert_km" >= 0)
 );
 --> statement-breakpoint
 CREATE TABLE "fleetcare"."kit_requirements" (
@@ -507,7 +521,7 @@ CREATE TABLE "fleetcare"."fault_report_comments" (
 CREATE TABLE "fleetcare"."fault_reports" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"tenant_id" uuid NOT NULL,
-	"number" text NOT NULL,
+	"number" text DEFAULT '' NOT NULL,
 	"vehicle_id" uuid NOT NULL,
 	"equipment_id" uuid,
 	"area" "fleetcare"."fault_area" DEFAULT 'other' NOT NULL,
@@ -810,6 +824,7 @@ CREATE INDEX "maintenance_jobs_supplier_idx" ON "fleetcare"."maintenance_jobs" U
 CREATE INDEX "downtimes_vehicle_idx" ON "fleetcare"."vehicle_downtimes" USING btree ("tenant_id","vehicle_id","started_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "downtimes_one_open_uq" ON "fleetcare"."vehicle_downtimes" USING btree ("tenant_id","vehicle_id") WHERE "fleetcare"."vehicle_downtimes"."ended_at" is null;--> statement-breakpoint
 CREATE INDEX "deadline_completions_deadline_idx" ON "fleetcare"."deadline_completions" USING btree ("tenant_id","deadline_id","done_on");--> statement-breakpoint
+CREATE UNIQUE INDEX "deadline_completions_sanitization_uq" ON "fleetcare"."deadline_completions" USING btree ("deadline_id","sanitization_id") WHERE "fleetcare"."deadline_completions"."sanitization_id" is not null;--> statement-breakpoint
 CREATE UNIQUE INDEX "deadline_rules_vehicle_uq" ON "fleetcare"."deadline_rules" USING btree ("tenant_id","deadline_type_id","vehicle_category") WHERE "fleetcare"."deadline_rules"."vehicle_category" is not null;--> statement-breakpoint
 CREATE UNIQUE INDEX "deadline_rules_equipment_uq" ON "fleetcare"."deadline_rules" USING btree ("tenant_id","deadline_type_id","equipment_type_id") WHERE "fleetcare"."deadline_rules"."equipment_type_id" is not null;--> statement-breakpoint
 CREATE UNIQUE INDEX "deadline_types_tenant_code_uq" ON "fleetcare"."deadline_types" USING btree ("tenant_id","code") WHERE "fleetcare"."deadline_types"."archived_at" is null;--> statement-breakpoint

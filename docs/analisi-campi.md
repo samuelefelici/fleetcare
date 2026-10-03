@@ -55,7 +55,7 @@ Da qui quattro decisioni strutturali:
 | `work_orders` + righe, manodopera, ricambi, tassonomia VMRS, `failure_codes`, `work_codes` | `maintenance_jobs` | Lavoro esterno: un intervento = un mezzo (o un'attrezzatura), un fornitore, entrata/uscita, cosa è stato fatto, la fattura. Se servirà il dettaglio a righe si aggiunge una tabella senza toccare questa. |
 | `reports` + media + commenti + zone SVG | `fault_reports` + `attachments` | Stesso principio (segnalare in meno di un minuto), ma un'**area** semplice al posto della tassonomia a tre livelli, e il collegamento all'attrezzatura guasta. |
 | `downtime_log` | `vehicle_downtimes` | Più il **mezzo sostitutivo**: in convenzione 118 la domanda è «con cosa abbiamo coperto il turno». |
-| `odometer_readings` | **tenuta** | Il km del mezzo diventa un dato derivato (§4); il trigger rifiuta anche letture nel futuro, sotto i km d'ingresso o più alte di una successiva. |
+| `odometer_readings` | **tenuta** | Il km del mezzo diventa un dato derivato (§4); il trigger rifiuta anche letture nel futuro, sotto i km d'ingresso, più alte di una successiva o con salti impossibili (più di 2.000 km al giorno: una cifra di troppo che bloccherebbe tutte le letture vere dopo). |
 | `fuel_logs` (buoni), `fuel_meter_readings`, `cng_dispensings`, `legacy_fuel_stations` | `fuel_logs`, `fuel_invoices`, `fuel_invoice_lines` | Niente pompe interne né colonnine: il controllo vero è dichiarato contro fatturato (§6). |
 | `accidents` + dettagli legacy | `accidents`, snellita | Più `during_emergency`: un sinistro con i dispositivi accesi ha un'altra lettura. |
 | `tyres`, `tyre_events` | — | Le gomme a matricola hanno senso per 120 bus, non per 20 furgoni. Il cambio gomme è un intervento di tipo `tyres`. |
@@ -113,7 +113,7 @@ omologazione. I campi di `vehicles` sono raggruppati così.
 | Allestimento | allestitore, data, n. omologazione, classe **UNI EN 1789** (A1/A2/B/C), `has_lift`, `has_priority_lights` (art. 177 CdS) | Il sollevatore vero è un'attrezzatura con le sue scadenze; qui c'è solo il fatto che il mezzo ce l'ha. |
 | Immatricolazione | data prima immatricolazione, n. carta di circolazione | La prima revisione delle autovetture dipende da questa data. |
 | Proprietà e provenienza | `ownership` (proprietà/comodato/leasing/noleggio), intestatario, acquisto e valore, **`funding_source`** (fondi propri, 5×1000, donazione, bando), **`donor_name`**, vita utile, **`bollo_exempt`** | Chi finanzia un mezzo di solito chiede di rendicontare: senza `funding_source` la domanda «cosa abbiamo comprato col 5×1000» non ha risposta. Molti mezzi sanitari di ETS sono esenti dal bollo: se è vero, la scadenza non nasce. |
-| Esercizio | `initial_odometer_km` (km all'ingresso in flotta), `odometer_km`, `fuel_vehicle_code` | `odometer_km` è **derivato**: vale l'ultima lettura, o i km d'ingresso se non ce ne sono, e non si scrive a mano (il database lo rifiuta); si cambia registrando una lettura. Il distributore identifica il mezzo dalla **matricola**: se coincide con il numero interno `fuel_vehicle_code` resta vuoto, se il distributore ne usa una sua si scrive qui. |
+| Esercizio | `initial_odometer_km` (km all'ingresso in flotta), `odometer_km`, `fuel_vehicle_code` | `odometer_km` è **derivato**: vale l'ultima lettura, o i km d'ingresso se non ce ne sono, e non si scrive a mano (il database lo rifiuta); si cambia registrando una lettura. I km d'ingresso si correggono, ma non sopra una lettura già registrata. Il distributore identifica il mezzo dalla **matricola**: se coincide con il numero interno `fuel_vehicle_code` resta vuoto, se il distributore ne usa una sua si scrive qui. Un codice vuoto, o di soli spazi e trattini, non è un codice e si rifiuta. |
 | Fine vita | data e motivo di dismissione | |
 
 Collegate al mezzo: `odometer_readings` (ogni lettura, da qualunque
@@ -202,16 +202,24 @@ mezzi possibili sono più di uno (la matricola di un mezzo è il numero
 interno di un altro), non indovina: la riga resta da abbinare a mano. La
 targa è l'ultima risorsa.
 
-**L'abbinamento**, in tre passate:
+**L'abbinamento**, in quattro passate:
 
 1. stesso buono, stesso prodotto (gasolio e AdBlue sullo stesso scontrino
-   restano distinti), data vicina; fra più candidati il più vicino;
-2. stesso mezzo, prodotto e data, litri e importo entro tolleranza. Si
-   cerca il **massimo numero di coppie**, preferendo le più vicine: se il
-   distributore sposta le date di un giorno e il mezzo fa pieni simili in
-   giorni consecutivi, una riga non «ruba» il rifornimento all'altra;
-3. stesso mezzo e data ma numeri che non tornano: `mismatch` col candidato
-   più vicino, da guardare a mano.
+   restano distinti), data vicina, numeri che tornano; fra più candidati il
+   più vicino;
+2. stesso mezzo, prodotto e data, litri e importo entro tolleranza:
+   l'assegnazione **ottima** per mezzo e prodotto (algoritmo ungherese), cioè
+   il massimo numero di coppie e, a parità, la distanza complessiva minima.
+   Ogni scelta «la coppia più vicina per prima» ha un controesempio: con le
+   date del distributore spostate di un giorno e pieni simili in giorni
+   consecutivi, una riga «ruba» il rifornimento all'altra e restano orfani.
+   I gruppi sono piccoli (una ventina di pieni al mese per mezzo), il costo
+   è trascurabile; un test la confronta con la ricerca esaustiva;
+3. stesso buono ma numeri che non tornano: `mismatch`, da guardare a mano;
+4. stesso mezzo e data ma numeri che non tornano: `mismatch` col candidato
+   più vicino.
+
+Il risultato non dipende dall'ordine delle righe in ingresso.
 
 Tolleranze di default: ±1 giorno, ±0,5 litri, ±0,50 €.
 
@@ -225,17 +233,45 @@ Tolleranze di default: ±1 giorno, ±0,5 litri, ±0,50 €.
 |---|---|
 | `deadline_types` | Il catalogo: periodicità di default (mesi **o** giorni, e/o km), preavviso in giorni e km, `month_end`, `renew_from_due` (RCA e bollo si rinnovano dall'anniversario, non dal giorno del pagamento), `blocking`, `document_required`, `is_vehicle_tax`, `completed_by_crew`, riferimento normativo. |
 | `deadline_rules` | A chi si applica e ogni quanto: una categoria di mezzo **o** un tipo di attrezzatura, eventualmente solo per certe proprietà. È qui che la stessa «revisione» vale 12 mesi per un'ambulanza e 24 per un'automedica. |
-| `deadlines` | La scadenza corrente di **un** mezzo **o** **un'**attrezzatura. Periodicità, preavviso e blocco **ereditano**: un campo nullo vale quanto la regola, e se anche la regola tace quanto il tipo. Un valore scritto sulla scadenza è una correzione a mano (il tagliando di quel Ducato è a 40.000 km) e vince. I valori effettivi si leggono dalla vista `deadlines_effective`. |
-| `deadline_completions` | Ogni adempimento: data, km, esito (`passed`/`conditional`/`failed`), prossima scadenza, fornitore, n. documento, **costo**, intervento o sanificazione collegati. Registrarlo **sposta la scadenza** (trigger): così l'amministrazione registra il rinnovo dell'RCA e l'equipaggio la sanificazione periodica, senza poter modificare la scadenza. Correggere o cancellare un adempimento la ricalcola; uno fallito non sposta niente. È anche da qui che il costo di un mezzo prende premio RCA, bollo e revisioni. |
+| `deadlines` | La scadenza corrente di **un** mezzo **o** **un'**attrezzatura. Periodicità, preavviso e blocco **ereditano**: un campo nullo vale quanto la regola, e se anche la regola tace quanto il tipo. Un valore scritto sulla scadenza è una correzione a mano (il tagliando di quel Ducato è a 40.000 km) e vince. I valori effettivi si leggono dalla vista `deadlines_effective`. Periodicità positive e preavvisi non negativi, a tutti e tre i livelli: uno 0 scritto per sbaglio farebbe scadere l'adempimento il giorno stesso. |
+| `deadline_completions` | Ogni adempimento: data, km, esito (`passed`/`conditional`/`failed`), prossima scadenza, fornitore, n. documento, **costo**, intervento o sanificazione collegati. Registrarlo **sposta la scadenza** (trigger): così l'amministrazione registra il rinnovo dell'RCA senza poter modificare la scadenza. Correggere o cancellare un adempimento la ricalcola; uno fallito non sposta niente. Un adempimento non può avere una data futura. È anche da qui che il costo di un mezzo prende premio RCA, bollo e revisioni. |
 
-Regole del motore (`domain/deadlines.ts`, logica pura e testata):
+**La scadenza vale la più lontana fra la base e l'ultimo adempimento.** La
+base (`base_due_on`, `base_due_km`) è la data scritta a mano o letta dal
+documento; l'adempimento è la prossima scadenza dell'ultimo adempimento
+valido. Così:
+
+- cancellare l'unico adempimento (o segnarlo fallito) riporta la scadenza
+  alla base, non la lascia dov'era;
+- uno storico vecchio caricato dopo (il rinnovo dell'anno scorso) non
+  riporta indietro una scadenza più recente;
+- scrivere a mano una data più lontana la fa diventare la nuova base;
+  scriverne una **più vicina** di quella fissata dall'ultimo adempimento si
+  rifiuta: quella data si corregge correggendo l'adempimento.
+
+**La sanificazione periodica la chiude l'equipaggio, ma decide il
+database.** Per i tipi `completed_by_crew` il volontario registra
+l'adempimento collegando una **propria** sanificazione **periodica**, sullo
+**stesso mezzo**, degli ultimi 30 giorni, e usata una volta sola. Data e
+prossima scadenza le calcola il database dalla sanificazione
+(`compute_next_due`, la stessa regola di `nextDue`), costo e fornitore non
+li scrive: qualunque cosa mandi il telefono, la scadenza non si sposta di
+un anno con un dato inventato.
+
+Regole del motore (`domain/deadlines.ts`, logica pura e testata). Le
+regole che esistono anche nel database (la vista dei valori effettivi, la
+prossima scadenza degli adempimenti dell'equipaggio, la normalizzazione dei
+codici dei mezzi) sono confrontate con il TypeScript su un Postgres vero da
+[`tests/effective.dbtest.ts`](../packages/db/tests/effective.dbtest.ts):
 
 - date come giorni di calendario (`YYYY-MM-DD`), mai istanti: niente
   «scade oggi» che diventa «scaduto» per il fuso del server;
 - `month_end`: la revisione si fa **entro il mese** dell'anniversario;
 - `renew_from_due`: la polizza pagata in anticipo, o nei giorni di
-  tolleranza, scade comunque all'anniversario; se l'anniversario è già
-  passato da un pezzo (mezzo rimasto scoperto), si riparte dal pagamento;
+  tolleranza, scade comunque all'anniversario. Con `renew_grace_days`
+  (RCA: 15 giorni, art. 1901 c.c.) un rinnovo arrivato oltre la tolleranza
+  è un contratto nuovo e il periodo parte dal pagamento; senza (bollo) il
+  calendario è fisso e il bollo pagato in ritardo resta sul suo mese;
 - una data impossibile (30 febbraio) è un errore, non si sposta in silenzio;
 - con data e km insieme **vale il primo raggiunto**;
 - una scadenza senza data né km è **«da completare»**, non «in regola»: il
@@ -296,11 +332,11 @@ dispositivo vero.
 | Scadenza | Periodicità | Blocca | Riferimento / note |
 |---|---|---|---|
 | Revisione periodica | 12 mesi ambulanze, pulmini, protezione civile · 24 mesi automedica e auto di servizio (fine mese) | sì | CdS art. 80: annuale per le ambulanze e per i mezzi oltre 9 posti o 3,5 t. Pulmini e protezione civile nascono annuali (lato sicuro), si portano a 24 mesi sui mezzi che lo consentono. Per le autovetture la prima è a 4 anni dall'immatricolazione: la data iniziale si inserisce a mano. |
-| Assicurazione RCA | 12 mesi dall'anniversario | sì | CdS art. 193. Con polizza a libro matricola il rinnovo si registra su ogni mezzo con la sua quota di premio. |
-| Tassa automobilistica | 12 mesi dalla scadenza precedente (fine mese) | no | Non nasce per i mezzi esenti. |
+| Assicurazione RCA | 12 mesi dall'anniversario, tolleranza 15 giorni | sì | CdS art. 193, c.c. art. 1901. Con polizza a libro matricola il rinnovo si registra su ogni mezzo con la sua quota di premio. |
+| Tassa automobilistica | 12 mesi dalla scadenza precedente (fine mese, calendario fisso) | no | Non nasce per i mezzi esenti. |
 | Tagliando | 12 mesi o 30.000 km | no | Piano del costruttore: correggere per mezzo. |
 | Autorizzazione al trasporto sanitario | dall'atto | sì | Regione Marche, L.R. 36/1998 e atti attuativi: durata e rinnovo da verificare. Solo mezzi sanitari. |
-| Sanificazione periodica | 30 giorni | no | Protocollo dell'associazione. La chiude l'equipaggio che sanifica (`completed_by_crew`), collegando la sanificazione. |
+| Sanificazione periodica | 30 giorni | no | Protocollo dell'associazione. La chiude l'equipaggio che sanifica (`completed_by_crew`), collegando la propria sanificazione (§7.1). |
 
 **Attrezzature**
 
@@ -331,10 +367,14 @@ livello carburante stanno in testata.
 Una check-list nasce **in bozza**: chi la compila (solo lui) scrive e
 corregge le risposte, poi la **invia** (`submitted_at`). Da inviata non
 cambia più: niente risposte aggiunte, niente correzioni, niente ritorno in
-bozza (solo la direzione può correggere). È documentazione, e le cose che
-contano le decide il database, non l'app: la firma è il nome di chi la
-compila, una voce numerica fuori soglia è un'anomalia qualunque esito mandi
-il client, le anomalie in testata si contano all'invio dalle risposte. Una
+bozza. Solo la direzione può correggere una risposta sbagliata (resta
+nell'audit), ma non chi l'ha compilata né il modello. Una risposta salvata
+mentre la check-list viene inviata aspetta l'invio e poi si rifiuta (lock
+sulla check-list): non entra di nascosto in una check-list già chiusa. È
+documentazione, e le cose che contano le decide il database, non l'app: la
+firma è il nome di chi la compila, una voce numerica fuori soglia è
+un'anomalia qualunque esito mandi il client, le anomalie in testata si
+contano dalle risposte all'invio e a ogni correzione della direzione. Una
 voce già usata in check-list compilate non si riscrive (etichetta, soglia,
 attrezzatura): si disattiva e se ne crea un'altra, così le check-list
 vecchie dicono ancora cosa è stato controllato. Il seed precarica cinque
@@ -352,9 +392,12 @@ fatto**: nessun dato del paziente né della patologia.
 dei volontari: mezzo, attrezzatura se è lei a essere guasta, area,
 descrizione, gravità a tre livelli, flag «il mezzo non è sicuro», chi ha
 segnalato, collegamento all'intervento che la risolve e alla risposta della
-check-list che l'ha generata. Una segnalazione rossa o «il mezzo non è
-sicuro» **avvisa i responsabili dal database** (trigger), senza dipendere
-dall'app: è l'avviso che non si deve perdere. Il filo dei messaggi
+check-list che l'ha generata. Il volontario la crea **aperta**: presa in
+carico, esito e intervento collegato li scrivono i responsabili. Una
+segnalazione rossa o «il mezzo non è sicuro» **avvisa i responsabili dal
+database** (trigger), senza dipendere dall'app: è l'avviso che non si deve
+perdere. Lo ricevono direzione e responsabile mezzi, e il responsabile del
+materiale quando il guasto è di un'attrezzatura. Il filo dei messaggi
 (`fault_report_comments`) chiude il cerchio con chi ha segnalato («mi mandi
 una foto della spia?»); le note `internal` fra responsabili l'equipaggio
 non le vede. I commenti non si modificano.
@@ -372,14 +415,20 @@ feriti o testimoni.
 
 **Allegati** (`attachments`): una tabella per tutti i documenti (certificati,
 fatture, carta di circolazione, foto). Il file sta su MinIO, qui il
-riferimento. Chi li vede dipende da cosa documentano: gli allegati di
-fatture, interventi e sinistri (denaro) l'equipaggio non li vede, e allega
-solo alle segnalazioni e alle check-list.
+riferimento. Il documento deve esistere nella stessa associazione (trigger:
+la tabella è polimorfica e non ha una chiave esterna). Chi li vede dipende
+da cosa documentano: gli allegati di fatture, interventi e sinistri (denaro)
+l'equipaggio non li vede, e allega solo alle **proprie** segnalazioni e
+alle **proprie** check-list in bozza. Un allegato non si modifica (si
+cancella e si ricarica): cambiarne il documento di riferimento potrebbe
+renderlo visibile a chi non deve. I documenti di una fattura li toglie
+l'amministrazione, gli altri i responsabili dei mezzi.
 
-**Numerazione** (`SGN-`, `MAN-`, `SIN-AAAA-NNNNN`): passa da
-`next_document_number`, che è l'unica a scrivere i contatori. Le
-segnalazioni le numera chiunque, interventi e sinistri solo i responsabili;
-nessuno può azzerare un contatore e bloccare così le segnalazioni.
+**Numerazione** (`SGN-`, `MAN-`, `SIN-AAAA-NNNNN`): il numero lo assegna il
+**database** all'inserimento, in ordine per associazione e anno, e ignora
+quello che manda l'app; poi non cambia più. Se il numero lo scegliesse
+l'app, chiunque potrebbe occupare i numeri futuri e far fallire ogni
+segnalazione successiva. I contatori non sono scrivibili dall'app.
 
 ---
 
@@ -389,8 +438,10 @@ Ogni tabella ha una policy di isolamento per associazione; sopra, policy
 **restrittive** per ruolo (una riga passa solo se le soddisfa tutte, quindi
 l'isolamento non si può dimenticare aggiungendo un ruolo). Verificate da
 [`tests/rls.test.sql`](../packages/db/tests/rls.test.sql), eseguito con il
-ruolo applicativo vero. I ruoli si controllano sempre per elenco positivo:
-un ruolo assente o sconosciuto non ottiene niente.
+ruolo applicativo vero. I ruoli si controllano sempre per elenco positivo,
+e una policy restrittiva comune (`known_role`) chiude ogni tabella a un
+ruolo assente o sconosciuto: senza ruolo non si legge nemmeno l'elenco dei
+mezzi.
 
 | Risorsa | crew | fleet_manager | equipment_manager | admin_finance | admin |
 |---|---|---|---|---|---|
@@ -398,8 +449,8 @@ un ruolo assente o sconosciuto non ottiene niente.
 | Attrezzature, materiale, dotazione, tipi e regole di scadenza, scadenze | R | CRUD | CRUD | R | CRUD |
 | Adempimenti delle scadenze | R, C¹ solo per i tipi `completed_by_crew` | CRUD | CRUD | CRUD | CRUD |
 | Interventi, sinistri (contengono costi) | — | CRUD | CRU | RU | CRUD |
-| Segnalazioni, rifornimenti, letture km | CR¹ | CRUD | CRU | CRU | CRUD |
-| Allegati | CR¹ (no fatture, interventi, sinistri; carica solo su segnalazioni e check-list) | CRUD | CRU (no fatture) | CRU | CRUD |
+| Segnalazioni, rifornimenti, letture km | CR¹ (la segnalazione nasce aperta) | CRUD | CRU | CRU | CRUD |
+| Allegati | R (no fatture, interventi, sinistri), C¹ solo sulle proprie segnalazioni e check-list in bozza | CRD (no C né D sulle fatture) | CR (no fatture) | CRD (D solo sulle fatture) | CRUD |
 | Check-list | CR³ | CR³ | CR³ | CR³ | CRUD |
 | Sanificazioni (documentazione) | CR¹ | CR | CR | CR | CRUD |
 | Commenti alle segnalazioni | CR¹ (senza note interne) | CR² | CR² | CR² | CRD² |
@@ -407,8 +458,8 @@ un ruolo assente o sconosciuto non ottiene niente.
 | Rubrica (`profiles`) | R | R | R | R | CRUD |
 | Recapiti e credenziali (`profile_accounts`) | RU propri | RU propri | RU propri | RU propri | CRUD |
 | Dispositivi push | CRUD propri | R e D tutti (pulizia delle iscrizioni scadute), CRU propri | come fleet_manager | come fleet_manager | come fleet_manager |
-| Notifiche | R, U, D proprie | R, U, D proprie, C | come fleet_manager | come fleet_manager | come fleet_manager, D tutte |
-| Contatori dei documenti | solo `next_document_number('SGN')` | anche `MAN`, `SIN` | come fleet_manager | come fleet_manager | come fleet_manager |
+| Notifiche | R, U, D proprie | R, U, D proprie, C | come fleet_manager | come fleet_manager | come fleet_manager |
+| Contatori dei documenti | — (il numero lo assegna il database) | — | — | — | — |
 | Audit log | — | — | — | R | R |
 
 ¹ solo a proprio nome. ² solo a proprio nome, anche note interne.

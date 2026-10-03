@@ -1,6 +1,6 @@
 {
-  "id": "affdba33-f9bc-4698-a53e-519953840fde",
-  "prevId": "602a28eb-3cf7-4db6-90d4-5460ecebe6ed",
+  "id": "a676fb66-59f5-480b-88c2-6c9c608e2eea",
+  "prevId": "dfed9f5b-ee4f-459c-828d-112f49e0d282",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1898,6 +1898,10 @@
         "vehicles_odometer_ck": {
           "name": "vehicles_odometer_ck",
           "value": "\"fleetcare\".\"vehicles\".\"odometer_km\" >= 0 and \"fleetcare\".\"vehicles\".\"initial_odometer_km\" >= 0"
+        },
+        "vehicles_codes_ck": {
+          "name": "vehicles_codes_ck",
+          "value": "regexp_replace(upper(\"fleetcare\".\"vehicles\".\"internal_code\"), '[^A-Z0-9]', '', 'g') <> ''\n          and regexp_replace(upper(\"fleetcare\".\"vehicles\".\"plate\"), '[^A-Z0-9]', '', 'g') <> ''\n          and (\"fleetcare\".\"vehicles\".\"fuel_vehicle_code\" is null\n               or regexp_replace(upper(\"fleetcare\".\"vehicles\".\"fuel_vehicle_code\"), '[^A-Z0-9]', '', 'g') <> '')"
         }
       },
       "isRLSEnabled": false
@@ -2580,7 +2584,8 @@
           "name": "number",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": true,
+          "default": "''"
         },
         "vehicle_id": {
           "name": "vehicle_id",
@@ -2924,7 +2929,8 @@
           "name": "number",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": true,
+          "default": "''"
         },
         "vehicle_id": {
           "name": "vehicle_id",
@@ -3636,6 +3642,28 @@
           "with": {},
           "method": "btree",
           "concurrently": false
+        },
+        "deadline_completions_sanitization_uq": {
+          "name": "deadline_completions_sanitization_uq",
+          "columns": [
+            {
+              "expression": "deadline_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "sanitization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "where": "\"fleetcare\".\"deadline_completions\".\"sanitization_id\" is not null",
+          "concurrently": false
         }
       },
       "foreignKeys": {
@@ -3944,6 +3972,10 @@
         "deadline_rules_interval_ck": {
           "name": "deadline_rules_interval_ck",
           "value": "not (\"fleetcare\".\"deadline_rules\".\"interval_months\" is not null and \"fleetcare\".\"deadline_rules\".\"interval_days\" is not null)"
+        },
+        "deadline_rules_values_ck": {
+          "name": "deadline_rules_values_ck",
+          "value": "\"fleetcare\".\"deadline_rules\".\"interval_months\" > 0 and \"fleetcare\".\"deadline_rules\".\"interval_days\" > 0 and \"fleetcare\".\"deadline_rules\".\"interval_km\" > 0\n          and \"fleetcare\".\"deadline_rules\".\"alert_days\" >= 0 and \"fleetcare\".\"deadline_rules\".\"alert_km\" >= 0"
         }
       },
       "isRLSEnabled": false
@@ -4027,6 +4059,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
+        },
+        "renew_grace_days": {
+          "name": "renew_grace_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
         },
         "alert_days": {
           "name": "alert_days",
@@ -4153,6 +4191,14 @@
         "deadline_types_interval_ck": {
           "name": "deadline_types_interval_ck",
           "value": "not (\"fleetcare\".\"deadline_types\".\"interval_months\" is not null and \"fleetcare\".\"deadline_types\".\"interval_days\" is not null)"
+        },
+        "deadline_types_values_ck": {
+          "name": "deadline_types_values_ck",
+          "value": "\"fleetcare\".\"deadline_types\".\"interval_months\" > 0 and \"fleetcare\".\"deadline_types\".\"interval_days\" > 0 and \"fleetcare\".\"deadline_types\".\"interval_km\" > 0\n          and \"fleetcare\".\"deadline_types\".\"alert_days\" >= 0 and \"fleetcare\".\"deadline_types\".\"alert_km\" >= 0 and \"fleetcare\".\"deadline_types\".\"renew_grace_days\" >= 0"
+        },
+        "deadline_types_crew_renew_ck": {
+          "name": "deadline_types_crew_renew_ck",
+          "value": "not (\"fleetcare\".\"deadline_types\".\"completed_by_crew\" and \"fleetcare\".\"deadline_types\".\"renew_from_due\")"
         }
       },
       "isRLSEnabled": false
@@ -4243,6 +4289,18 @@
         },
         "due_km": {
           "name": "due_km",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "base_due_on": {
+          "name": "base_due_on",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "base_due_km": {
+          "name": "base_due_km",
           "type": "integer",
           "primaryKey": false,
           "notNull": false
@@ -4503,6 +4561,10 @@
         "deadlines_interval_ck": {
           "name": "deadlines_interval_ck",
           "value": "not (\"fleetcare\".\"deadlines\".\"interval_months\" is not null and \"fleetcare\".\"deadlines\".\"interval_days\" is not null)"
+        },
+        "deadlines_values_ck": {
+          "name": "deadlines_values_ck",
+          "value": "\"fleetcare\".\"deadlines\".\"interval_months\" > 0 and \"fleetcare\".\"deadlines\".\"interval_days\" > 0 and \"fleetcare\".\"deadlines\".\"interval_km\" > 0\n          and \"fleetcare\".\"deadlines\".\"alert_days\" >= 0 and \"fleetcare\".\"deadlines\".\"alert_km\" >= 0"
         }
       },
       "isRLSEnabled": false
@@ -5157,7 +5219,8 @@
           "name": "number",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": true,
+          "default": "''"
         },
         "vehicle_id": {
           "name": "vehicle_id",
@@ -7489,6 +7552,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "base_due_on": {
+          "name": "base_due_on",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "base_due_km": {
+          "name": "base_due_km",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "last_done_on": {
           "name": "last_done_on",
           "type": "date",
@@ -7554,6 +7629,12 @@
           "type": "boolean",
           "primaryKey": false,
           "notNull": true
+        },
+        "renew_grace_days": {
+          "name": "renew_grace_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
         },
         "overridden": {
           "name": "overridden",

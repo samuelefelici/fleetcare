@@ -36,9 +36,10 @@ export const checklistTemplates = fleetcareSchema.table(
       .notNull()
       .default(sql`'{}'`),
     /**
-     * Si incrementa quando cambiano le voci: una check-list compilata resta
-     * leggibile con le voci di allora, perché le risposte puntano alla voce
-     * e le voci non si cancellano, si disattivano.
+     * Numero di versione del modello, informativo: lo aggiorna l'app quando
+     * cambia le voci, e la check-list compilata lo ricopia. Le check-list
+     * vecchie restano leggibili comunque, perché le risposte puntano alla
+     * voce e una voce usata non si riscrive (si disattiva).
      */
     version: integer("version").notNull().default(1),
     active: boolean("active").notNull().default(true),

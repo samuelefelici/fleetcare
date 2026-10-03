@@ -19,7 +19,8 @@ export const accidents = fleetcareSchema.table(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
-    number: text("number").notNull(), // SIN-YYYY-NNNNN
+    /** SIN-AAAA-NNNNN: lo assegna il database all'inserimento, il valore del client si ignora */
+    number: text("number").notNull().default(""),
     vehicleId: uuid("vehicle_id").notNull(),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
     location: text("location"),

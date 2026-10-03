@@ -11,8 +11,13 @@
 --   2. policy RESTRICTIVE per comando che restringono per ruolo.
 -- Una riga passa se soddisfa la permissiva E tutte le restrittive del
 -- comando: l'isolamento tenant non si può dimenticare aggiungendo un ruolo.
--- I ruoli si controllano sempre per elenco positivo: un ruolo assente o
--- sconosciuto non ottiene niente (si chiude, non si apre).
+-- I ruoli si controllano sempre per elenco positivo, e una policy
+-- restrittiva su ogni tabella (known_role) pretende un ruolo valido: un
+-- ruolo assente o sconosciuto non vede e non scrive niente.
+--
+-- I trigger che devono distinguere «lo scrive l'app» da «lo scrive un altro
+-- trigger» usano pg_trigger_depth(), che l'app non può falsare (un flag di
+-- sessione sì: lo imposterebbe chiunque).
 --
 -- Indice:
 --   ruolo e grant · helper · updated_at · audit · contachilometri · login
@@ -38,8 +43,8 @@ alter default privileges in schema fleetcare
 revoke insert, update, delete on fleetcare.audit_logs from fleetcare_app;
 -- i tenant si leggono e si aggiornano, non si creano né cancellano dall'app
 revoke insert, delete on fleetcare.tenants from fleetcare_app;
--- la numerazione passa solo da next_document_number: un contatore azzerato
--- a mano farebbe fallire ogni segnalazione successiva
+-- i contatori li scrive solo il trigger che numera i documenti: un
+-- contatore azzerato a mano farebbe fallire ogni segnalazione successiva
 revoke insert, update, delete on fleetcare.document_counters from fleetcare_app;
 alter role fleetcare_app set search_path = fleetcare, public;
 
@@ -133,24 +138,34 @@ begin
 end
 $$;
 
+-- le risposte delle check-list si inseriscono a decine al giorno e non si
+-- correggono: l'audit tiene solo le correzioni (della direzione)
+create trigger trg_checklist_answers_audit after update or delete on fleetcare.checklist_answers
+  for each row execute function fleetcare.audit_row_change();
+
 -- ============================================================
 -- CONTACHILOMETRI
 --
 -- Il km di un mezzo è un dato DERIVATO: vale l'ultima lettura registrata,
 -- o i km d'ingresso in flotta se non ce n'è nessuna. Tre trigger:
 --  * prima di scrivere una lettura si valida: non nel futuro, non sotto
---    una precedente (né sotto i km d'ingresso), non sopra una successiva.
---    Vale anche per le correzioni, escludendo dal confronto la riga
---    stessa. Le letture dello stesso mezzo si mettono in fila (lock), così
---    due inserimenti concorrenti non si scavalcano;
+--    una precedente (né sotto i km d'ingresso), non sopra una successiva,
+--    e senza salti impossibili (più di 2.000 km al giorno: è una cifra in
+--    più, che bloccherebbe tutte le letture vere successive). Vale anche
+--    per le correzioni, escludendo dal confronto la riga stessa;
 --  * dopo ogni scrittura o cancellazione il km del mezzo si ricalcola;
---  * sul mezzo il km non si scrive a mano: si registra una lettura.
+--  * sul mezzo il km non si scrive a mano: si registra una lettura. E i km
+--    d'ingresso non salgono sopra una lettura già registrata.
+-- Tutto ciò che legge o scrive le letture di un mezzo si mette in fila con
+-- lo stesso lock, così letture, correzioni e cancellazioni concorrenti non
+-- si scavalcano.
 -- ============================================================
 create or replace function fleetcare.check_odometer_reading() returns trigger
   language plpgsql as
 $$
 declare
   v_before int;
+  v_before_at timestamptz;
   v_after int;
   v_initial int;
 begin
@@ -163,9 +178,10 @@ begin
 
   select initial_odometer_km into v_initial from fleetcare.vehicles
    where id = new.vehicle_id and tenant_id = new.tenant_id;
-  select max(km) into v_before from fleetcare.odometer_readings
+  select km, read_at into v_before, v_before_at from fleetcare.odometer_readings
    where tenant_id = new.tenant_id and vehicle_id = new.vehicle_id
-     and read_at <= new.read_at and id <> new.id;
+     and read_at <= new.read_at and id <> new.id
+   order by km desc limit 1;
   select min(km) into v_after from fleetcare.odometer_readings
    where tenant_id = new.tenant_id and vehicle_id = new.vehicle_id
      and read_at > new.read_at and id <> new.id;
@@ -178,6 +194,11 @@ begin
   if v_after is not null and new.km > v_after then
     raise exception 'Lettura di % km superiore a una successiva (% km)', new.km, v_after
       using errcode = 'check_violation';
+  end if;
+  if v_before is not null and new.km - v_before >
+       2000 * greatest(1, ceil(extract(epoch from new.read_at - v_before_at) / 86400)) then
+    raise exception 'Lettura di % km: % km in più dell''ultima (% km), non plausibile. Una cifra di troppo?',
+      new.km, new.km - v_before, v_before using errcode = 'check_violation';
   end if;
   return new;
 end
@@ -200,7 +221,7 @@ begin
       select old.vehicle_id, old.tenant_id where tg_op <> 'INSERT'
     ) x (vehicle_id, tenant_id)
   loop
-    perform set_config('fleetcare.odometer_refresh', 'on', true);
+    perform pg_advisory_xact_lock(hashtextextended('fleetcare.odometer:' || v_vehicle::text, 0));
     update fleetcare.vehicles v
        set odometer_km = coalesce(
              (select r.km from fleetcare.odometer_readings r
@@ -212,7 +233,6 @@ begin
                where r.tenant_id = v_tenant and r.vehicle_id = v_vehicle
                order by r.read_at desc, r.km desc limit 1)
      where v.id = v_vehicle and v.tenant_id = v_tenant;
-    perform set_config('fleetcare.odometer_refresh', '', true);
   end loop;
   return null;
 end
@@ -222,7 +242,8 @@ create or replace function fleetcare.guard_vehicle_odometer() returns trigger
   language plpgsql as
 $$
 begin
-  if coalesce(current_setting('fleetcare.odometer_refresh', true), '') = 'on' then
+  -- scritto dal ricalcolo (un trigger su odometer_readings): è lui la fonte del km
+  if pg_trigger_depth() > 1 then
     return new;
   end if;
   if tg_op = 'INSERT' then
@@ -236,6 +257,13 @@ begin
       using errcode = 'check_violation';
   end if;
   if new.initial_odometer_km is distinct from old.initial_odometer_km then
+    perform pg_advisory_xact_lock(hashtextextended('fleetcare.odometer:' || new.id::text, 0));
+    if exists (select 1 from fleetcare.odometer_readings r
+                where r.tenant_id = new.tenant_id and r.vehicle_id = new.id
+                  and r.km < new.initial_odometer_km) then
+      raise exception 'Km d''ingresso (% km) superiori a una lettura già registrata', new.initial_odometer_km
+        using errcode = 'check_violation';
+    end if;
     new.odometer_km := coalesce(
       (select r.km from fleetcare.odometer_readings r
         where r.tenant_id = new.tenant_id and r.vehicle_id = new.id
@@ -277,38 +305,40 @@ grant execute on function fleetcare.auth_find_profile(text, text) to fleetcare_a
 
 -- ---------- numerazione dei documenti ----------
 -- SGN-2026-00001 (segnalazioni), MAN-… (interventi), SIN-… (sinistri):
--- atomica per associazione e anno. I contatori non si toccano dall'app:
--- passano solo da qui. Le segnalazioni le numera chiunque; interventi e
--- sinistri solo i responsabili, che sono gli unici a crearli.
-create or replace function fleetcare.next_document_number(p_kind text, p_year int) returns text
+-- il numero lo assegna il database all'inserimento, atomico per
+-- associazione e anno (di Roma), e ignora quello che manda il client. Se
+-- il numero lo scegliesse l'app, un utente potrebbe occupare i numeri
+-- futuri e far fallire ogni segnalazione successiva. Il numero non cambia
+-- più. SECURITY DEFINER perché i contatori non sono scrivibili dall'app.
+create or replace function fleetcare.assign_document_number() returns trigger
   language plpgsql security definer set search_path = fleetcare, public as
 $$
 declare
-  v_tenant uuid := fleetcare.app_tenant_id();
+  v_kind text := tg_argv[0];
+  v_year int := extract(year from now() at time zone 'Europe/Rome')::int;
   v_value int;
 begin
-  if v_tenant is null then
-    raise exception 'Nessuna associazione nel contesto' using errcode = 'insufficient_privilege';
-  end if;
-  if p_kind not in ('SGN', 'MAN', 'SIN') then
-    raise exception 'Tipo di documento sconosciuto: %', p_kind using errcode = 'invalid_parameter_value';
-  end if;
-  if p_kind <> 'SGN' and not fleetcare.app_is_staff() then
-    raise exception 'Numerazione % riservata ai responsabili', p_kind using errcode = 'insufficient_privilege';
-  end if;
-  if p_year not between 2000 and 2999 then
-    raise exception 'Anno non valido: %', p_year using errcode = 'invalid_parameter_value';
+  if tg_op = 'UPDATE' then
+    if new.number is distinct from old.number then
+      raise exception 'Il numero % non si cambia', old.number using errcode = 'check_violation';
+    end if;
+    return new;
   end if;
   insert into fleetcare.document_counters (tenant_id, kind, year, last_value)
-  values (v_tenant, p_kind, p_year, 1)
+  values (new.tenant_id, v_kind, v_year, 1)
   on conflict (tenant_id, kind, year)
   do update set last_value = fleetcare.document_counters.last_value + 1
   returning last_value into v_value;
-  return p_kind || '-' || p_year || '-' || lpad(v_value::text, 5, '0');
+  new.number := v_kind || '-' || v_year || '-' || lpad(v_value::text, 5, '0');
+  return new;
 end
 $$;
-revoke all on function fleetcare.next_document_number(text, int) from public;
-grant execute on function fleetcare.next_document_number(text, int) to fleetcare_app;
+create trigger trg_fault_reports_number before insert or update of number
+  on fleetcare.fault_reports for each row execute function fleetcare.assign_document_number('SGN');
+create trigger trg_maintenance_jobs_number before insert or update of number
+  on fleetcare.maintenance_jobs for each row execute function fleetcare.assign_document_number('MAN');
+create trigger trg_accidents_number before insert or update of number
+  on fleetcare.accidents for each row execute function fleetcare.assign_document_number('SIN');
 
 -- ============================================================
 -- SCADENZE
@@ -378,15 +408,16 @@ create trigger trg_deadline_types_subject before update of subject
 -- Un campo nullo sulla scadenza eredita dalla regola (per la categoria del
 -- mezzo o il tipo dell'attrezzatura), poi dal tipo. Mesi e giorni
 -- viaggiano insieme: vince il primo livello che ne fissa uno. È la stessa
--- catena di `effectiveDeadline` in src/domain/deadlines.ts (i test di
--- tests/deadlines.test.sql le tengono allineate).
+-- catena di `effectiveDeadline` in src/domain/deadlines.ts: il test
+-- tests/effective.dbtest.ts le confronta su un database vero.
 -- security_invoker: chi legge la vista è soggetto alle policy delle tabelle.
 create view fleetcare.deadlines_effective with (security_invoker = true) as
 select
   d.id, d.tenant_id, d.deadline_type_id,
   t.code as type_code, t.label as type_label, t.subject,
   d.vehicle_id, d.equipment_id, d.label,
-  d.due_on, d.due_km, d.last_done_on, d.last_done_km, d.archived_at,
+  d.due_on, d.due_km, d.base_due_on, d.base_due_km,
+  d.last_done_on, d.last_done_km, d.archived_at,
   case when d.interval_months is not null or d.interval_days is not null then d.interval_months
        when r.interval_months is not null or r.interval_days is not null then r.interval_months
        else t.interval_months end as interval_months,
@@ -397,7 +428,7 @@ select
   coalesce(d.alert_days, r.alert_days, t.alert_days) as alert_days,
   coalesce(d.alert_km, r.alert_km, t.alert_km) as alert_km,
   coalesce(d.blocking, r.blocking, t.blocking) as blocking,
-  t.month_end, t.renew_from_due,
+  t.month_end, t.renew_from_due, t.renew_grace_days,
   (d.interval_months is not null or d.interval_days is not null or d.interval_km is not null
    or d.alert_days is not null or d.alert_km is not null or d.blocking is not null) as overridden
 from fleetcare.deadlines d
@@ -413,13 +444,139 @@ left join fleetcare.deadline_rules r
       or (d.equipment_id is not null and r.equipment_type_id = e.equipment_type_id));
 grant select on fleetcare.deadlines_effective to fleetcare_app;
 
--- ---------- un adempimento sposta la scadenza ----------
--- Dopo ogni adempimento registrato, corretto o cancellato, la scadenza
--- prende i dati dell'ultimo adempimento non fallito: ultimo fatto, e
--- prossima scadenza se l'adempimento la indica. SECURITY DEFINER perché
--- chi registra l'adempimento (l'amministrazione che paga l'RCA, il
--- volontario che sanifica) non ha scrittura sulle scadenze. Tocca solo la
--- scadenza dell'adempimento, nello stesso tenant.
+-- ---------- la prossima scadenza, calcolata dal database ----------
+-- Dai valori effettivi della scadenza: mesi (fermandosi all'ultimo giorno
+-- del mese più corto) oppure giorni, e fine mese se il tipo lo chiede. È
+-- `nextDue` di src/domain/deadlines.ts senza il rinnovo dalla scadenza;
+-- serve agli adempimenti dell'equipaggio, per i quali la data non la
+-- decide il client (tests/effective.dbtest.ts le confronta).
+create or replace function fleetcare.compute_next_due(p_deadline uuid, p_done date) returns date
+  language sql stable as
+$$
+  select case
+           when e.interval_months is null and e.interval_days is null then null
+           else (
+             with base as (
+               select case when e.interval_months is not null
+                           then (p_done + make_interval(months => e.interval_months))::date
+                           else p_done + e.interval_days end as d
+             )
+             select case when e.month_end
+                         then (date_trunc('month', base.d) + interval '1 month - 1 day')::date
+                         else base.d end
+               from base)
+         end
+    from fleetcare.deadlines_effective e
+   where e.id = p_deadline
+$$;
+
+-- ---------- adempimenti: cosa si può registrare ----------
+-- Per tutti: niente adempimenti nel futuro (una data sbagliata li
+-- metterebbe davanti a quelli veri). Per l'equipaggio, che registra solo i
+-- tipi completed_by_crew (la sanificazione periodica): l'adempimento è una
+-- sanificazione «periodica» propria, sullo stesso mezzo, degli ultimi 30
+-- giorni, e usata una volta sola; la data la prende da lei, la prossima
+-- scadenza la calcola il database, costi e fornitori non li scrive.
+create or replace function fleetcare.check_completion() returns trigger
+  language plpgsql as
+$$
+declare
+  v_today date := (now() at time zone 'Europe/Rome')::date;
+  v_san record;
+begin
+  if current_user = 'fleetcare_app' and not fleetcare.app_is_staff() then
+    select s.performed_by_id, s.kind, s.vehicle_id, (s.performed_at at time zone 'Europe/Rome')::date as day
+      into v_san
+      from fleetcare.sanitizations s
+     where s.id = new.sanitization_id and s.tenant_id = new.tenant_id;
+    if new.sanitization_id is null or not found
+       or v_san.performed_by_id is distinct from fleetcare.app_user_id()
+       or v_san.kind <> 'periodic'
+       or v_san.vehicle_id is distinct from
+          (select d.vehicle_id from fleetcare.deadlines d where d.id = new.deadline_id and d.tenant_id = new.tenant_id) then
+      raise exception 'L''equipaggio registra questo adempimento solo collegando una propria sanificazione periodica dello stesso mezzo'
+        using errcode = 'insufficient_privilege';
+    end if;
+    if v_san.day < v_today - 30 then
+      raise exception 'La sanificazione del % è troppo vecchia per chiudere la scadenza', v_san.day
+        using errcode = 'check_violation';
+    end if;
+    new.done_on := v_san.day;
+    new.done_km := null;
+    new.outcome := 'passed';
+    new.next_due_on := fleetcare.compute_next_due(new.deadline_id, new.done_on);
+    new.next_due_km := null;
+    new.cost_eur := null;
+    new.supplier_id := null;
+    new.maintenance_job_id := null;
+    new.document_number := null;
+  end if;
+  if new.done_on > v_today then
+    raise exception 'Adempimento con data futura (%)', new.done_on using errcode = 'check_violation';
+  end if;
+  return new;
+end
+$$;
+create trigger trg_deadline_completions_check before insert or update
+  on fleetcare.deadline_completions
+  for each row execute function fleetcare.check_completion();
+
+-- ---------- la scadenza: base e adempimenti ----------
+-- Una scadenza vale la più lontana fra
+--   * la base: la data scritta a mano o letta dal documento;
+--   * la prossima scadenza dell'ultimo adempimento valido (non «failed»).
+-- Così cancellare l'unico adempimento (o segnarlo fallito) riporta la
+-- scadenza alla base, e uno storico vecchio caricato dopo non riporta
+-- indietro una scadenza più recente. Quando l'app scrive due_on, quel
+-- valore diventa la nuova base; non può però scendere sotto ciò che
+-- l'ultimo adempimento ha stabilito: quella data si corregge correggendo
+-- l'adempimento.
+create or replace function fleetcare.track_deadline_base() returns trigger
+  language plpgsql as
+$$
+declare c record;
+begin
+  -- scritto dal ricalcolo degli adempimenti: non è una correzione a mano
+  if pg_trigger_depth() > 1 then
+    return new;
+  end if;
+  if tg_op = 'INSERT' then
+    new.base_due_on := new.due_on;
+    new.base_due_km := new.due_km;
+    return new;
+  end if;
+  if (new.base_due_on, new.base_due_km) is distinct from (old.base_due_on, old.base_due_km) then
+    raise exception 'La base della scadenza non si scrive: si scrive due_on' using errcode = 'check_violation';
+  end if;
+  if (new.due_on, new.due_km) is not distinct from (old.due_on, old.due_km) then
+    return new;
+  end if;
+  select cc.done_on, cc.next_due_on, cc.next_due_km into c
+    from fleetcare.deadline_completions cc
+   where cc.tenant_id = new.tenant_id and cc.deadline_id = new.id and cc.outcome <> 'failed'
+   order by cc.done_on desc, cc.created_at desc
+   limit 1;
+  if found and ((new.due_on is not null and c.next_due_on is not null and new.due_on < c.next_due_on)
+                or (new.due_km is not null and c.next_due_km is not null and new.due_km < c.next_due_km)) then
+    raise exception 'La scadenza la fissa l''adempimento del %: si corregge correggendo quello', c.done_on
+      using errcode = 'check_violation';
+  end if;
+  new.base_due_on := new.due_on;
+  new.base_due_km := new.due_km;
+  new.due_on := greatest(new.base_due_on, c.next_due_on);
+  new.due_km := greatest(new.base_due_km, c.next_due_km);
+  return new;
+end
+$$;
+create trigger trg_deadlines_base before insert or update
+  on fleetcare.deadlines
+  for each row execute function fleetcare.track_deadline_base();
+
+-- Dopo ogni adempimento registrato, corretto o cancellato si ricalcolano
+-- ultimo fatto e scadenza. SECURITY DEFINER perché chi registra
+-- l'adempimento (l'amministrazione che paga l'RCA, il volontario che
+-- sanifica) non ha scrittura sulle scadenze. Tocca solo la scadenza
+-- dell'adempimento, nello stesso tenant.
 create or replace function fleetcare.sync_deadline_from_completions() returns trigger
   language plpgsql security definer set search_path = fleetcare, public as
 $$
@@ -440,23 +597,21 @@ begin
      where c.tenant_id = v_tenant and c.deadline_id = v_deadline and c.outcome <> 'failed'
      order by c.done_on desc, c.created_at desc
      limit 1;
-    if found then
-      update fleetcare.deadlines
-         set last_done_on = r.done_on,
-             last_done_km = r.done_km,
-             due_on = coalesce(r.next_due_on, due_on),
-             due_km = coalesce(r.next_due_km, due_km)
-       where id = v_deadline and tenant_id = v_tenant;
-    else
-      update fleetcare.deadlines
-         set last_done_on = null, last_done_km = null
-       where id = v_deadline and tenant_id = v_tenant;
-    end if;
+    -- senza adempimenti validi `r` è vuoto: si torna alla base
+    update fleetcare.deadlines
+       set last_done_on = r.done_on,
+           last_done_km = r.done_km,
+           due_on = greatest(base_due_on, r.next_due_on),
+           due_km = greatest(base_due_km, r.next_due_km)
+     where id = v_deadline and tenant_id = v_tenant;
   end loop;
   return null;
 end
 $$;
-create trigger trg_deadline_completions_sync after insert or update or delete
+-- solo le colonne che decidono la scadenza: correggere un costo o un numero
+-- di documento non deve ricalcolare niente
+create trigger trg_deadline_completions_sync
+  after insert or delete or update of deadline_id, done_on, done_km, outcome, next_due_on, next_due_km
   on fleetcare.deadline_completions
   for each row execute function fleetcare.sync_deadline_from_completions();
 
@@ -532,34 +687,51 @@ $$;
 -- disattiva e se ne crea un'altra, così le check-list vecchie dicono
 -- ancora cosa è stato controllato.
 -- ============================================================
+create or replace function fleetcare.checklist_flags(p_checklist uuid, out anomalies boolean, out safety boolean)
+  language sql stable as
+$$
+  select coalesce(bool_or(a.outcome = 'anomaly'), false),
+         coalesce(bool_or(a.outcome = 'anomaly' and i.safety_critical), false)
+    from fleetcare.checklist_answers a
+    join fleetcare.checklist_template_items i on i.tenant_id = a.tenant_id and i.id = a.template_item_id
+   where a.checklist_id = p_checklist
+$$;
+
 create or replace function fleetcare.prepare_checklist() returns trigger
   language plpgsql as
 $$
+declare f record;
 begin
-  if tg_op = 'INSERT' and new.submitted_at is not null then
-    raise exception 'Una check-list nasce in bozza: si invia dopo aver scritto le risposte'
-      using errcode = 'check_violation';
-  end if;
-  if tg_op = 'UPDATE' and old.submitted_at is not null and new.submitted_at is null then
-    raise exception 'Una check-list inviata non torna in bozza' using errcode = 'check_violation';
-  end if;
-
-  select p.full_name into new.signed_name from fleetcare.profiles p
-   where p.id = new.performed_by_id and p.tenant_id = new.tenant_id;
   if tg_op = 'INSERT' then
+    if new.submitted_at is not null then
+      raise exception 'Una check-list nasce in bozza: si invia dopo aver scritto le risposte'
+        using errcode = 'check_violation';
+    end if;
+    select p.full_name into new.signed_name from fleetcare.profiles p
+     where p.id = new.performed_by_id and p.tenant_id = new.tenant_id;
     select tp.version into new.template_version from fleetcare.checklist_templates tp
      where tp.id = new.template_id and tp.tenant_id = new.tenant_id;
+  else
+    if old.submitted_at is not null and new.submitted_at is null then
+      raise exception 'Una check-list inviata non torna in bozza' using errcode = 'check_violation';
+    end if;
+    -- chi l'ha fatta, con quale modello e la firma restano quelli dell'inizio
+    if new.performed_by_id is distinct from old.performed_by_id
+       or new.template_id is distinct from old.template_id then
+      raise exception 'Chi compila la check-list e il modello non si cambiano: si crea un''altra check-list'
+        using errcode = 'check_violation';
+    end if;
+    new.signed_name := old.signed_name;
+    new.template_version := old.template_version;
   end if;
 
-  if new.submitted_at is not null and (tg_op = 'INSERT' or old.submitted_at is null) then
-    new.has_anomalies := exists (
-      select 1 from fleetcare.checklist_answers a
-       where a.checklist_id = new.id and a.outcome = 'anomaly');
-    new.has_safety_anomalies := exists (
-      select 1 from fleetcare.checklist_answers a
-        join fleetcare.checklist_template_items i on i.tenant_id = a.tenant_id and i.id = a.template_item_id
-       where a.checklist_id = new.id and a.outcome = 'anomaly' and i.safety_critical);
-  elsif tg_op = 'INSERT' then
+  -- le anomalie in testata le conta il database, sempre: all'invio e a ogni
+  -- correzione successiva della direzione
+  if new.submitted_at is not null then
+    f := fleetcare.checklist_flags(new.id);
+    new.has_anomalies := f.anomalies;
+    new.has_safety_anomalies := f.safety;
+  else
     new.has_anomalies := false;
     new.has_safety_anomalies := false;
   end if;
@@ -570,19 +742,42 @@ create trigger trg_checklists_prepare before insert or update
   on fleetcare.checklists
   for each row execute function fleetcare.prepare_checklist();
 
+-- Prima di scrivere o cancellare una risposta si blocca la check-list
+-- (FOR UPDATE): se intanto qualcuno la sta inviando si aspetta, e dopo
+-- l'invio la risposta viene rifiutata. Senza il lock una risposta salvata
+-- in parallelo all'invio entrerebbe nella check-list inviata senza contare
+-- fra le anomalie. Solo la direzione tocca le risposte di una inviata.
 create or replace function fleetcare.check_checklist_answer() returns trigger
   language plpgsql as
 $$
 declare
   i record;
-  v_template uuid;
+  c record;
+  v_checklist uuid := case when tg_op = 'DELETE' then old.checklist_id else new.checklist_id end;
+  v_tenant uuid := case when tg_op = 'DELETE' then old.tenant_id else new.tenant_id end;
 begin
+  select ch.submitted_at, ch.template_id into c from fleetcare.checklists ch
+   where ch.id = v_checklist and ch.tenant_id = v_tenant
+   for update;
+  if not found then
+    -- cancellazione a cascata: la check-list è già andata (chi può
+    -- cancellare risposte lo decide comunque la policy delle risposte)
+    if tg_op = 'DELETE' then
+      return old;
+    end if;
+    raise exception 'Check-list non trovata o non modificabile' using errcode = 'insufficient_privilege';
+  end if;
+  if c.submitted_at is not null and not fleetcare.app_has_role('admin') and current_user = 'fleetcare_app' then
+    raise exception 'La check-list è già stata inviata' using errcode = 'insufficient_privilege';
+  end if;
+  if tg_op = 'DELETE' then
+    return old;
+  end if;
+
   select it.kind, it.min_value, it.max_value, it.template_id into i
     from fleetcare.checklist_template_items it
    where it.id = new.template_item_id and it.tenant_id = new.tenant_id;
-  select c.template_id into v_template from fleetcare.checklists c
-   where c.id = new.checklist_id and c.tenant_id = new.tenant_id;
-  if i.template_id is distinct from v_template then
+  if i.template_id is distinct from c.template_id then
     raise exception 'La voce non appartiene al modello di questa check-list' using errcode = 'check_violation';
   end if;
   if i.kind = 'number' and new.value_numeric is not null
@@ -593,9 +788,25 @@ begin
   return new;
 end
 $$;
-create trigger trg_checklist_answers_check before insert or update
+create trigger trg_checklist_answers_check before insert or update or delete
   on fleetcare.checklist_answers
   for each row execute function fleetcare.check_checklist_answer();
+
+-- una correzione della direzione su una check-list inviata ricalcola la testata
+create or replace function fleetcare.refresh_checklist_flags() returns trigger
+  language plpgsql as
+$$
+begin
+  update fleetcare.checklists c
+     set has_anomalies = c.has_anomalies -- il valore lo ricalcola prepare_checklist
+   where c.id = case when tg_op = 'DELETE' then old.checklist_id else new.checklist_id end
+     and c.submitted_at is not null;
+  return null;
+end
+$$;
+create trigger trg_checklist_answers_refresh after insert or update or delete
+  on fleetcare.checklist_answers
+  for each row execute function fleetcare.refresh_checklist_flags();
 
 create or replace function fleetcare.guard_used_checklist_item() returns trigger
   language plpgsql as
@@ -619,6 +830,41 @@ create trigger trg_checklist_items_guard before update
   for each row execute function fleetcare.guard_used_checklist_item();
 
 -- ============================================================
+-- ALLEGATI
+--
+-- `entity_id` non ha una chiave esterna (la tabella è polimorfica): lo
+-- controlla questo trigger. L'entità deve esistere nella stessa
+-- associazione ed essere del tipo dichiarato; SECURITY INVOKER, quindi
+-- deve anche essere visibile a chi allega.
+-- ============================================================
+create or replace function fleetcare.check_attachment_entity() returns trigger
+  language plpgsql as
+$$
+declare v_exists boolean;
+begin
+  execute format('select exists (select 1 from fleetcare.%I where id = $1 and tenant_id = $2)',
+                 case new.entity_type
+                   when 'vehicle' then 'vehicles'
+                   when 'equipment' then 'equipment'
+                   when 'deadline_completion' then 'deadline_completions'
+                   when 'maintenance_job' then 'maintenance_jobs'
+                   when 'fault_report' then 'fault_reports'
+                   when 'accident' then 'accidents'
+                   when 'fuel_invoice' then 'fuel_invoices'
+                   when 'checklist' then 'checklists'
+                 end)
+    into v_exists using new.entity_id, new.tenant_id;
+  if not v_exists then
+    raise exception 'L''allegato punta a un % che non esiste', new.entity_type using errcode = 'foreign_key_violation';
+  end if;
+  return new;
+end
+$$;
+create trigger trg_attachments_entity before insert or update of entity_type, entity_id
+  on fleetcare.attachments
+  for each row execute function fleetcare.check_attachment_entity();
+
+-- ============================================================
 -- NOTIFICHE
 --
 -- Una segnalazione rossa o «il mezzo non è sicuro» avvisa i responsabili
@@ -639,7 +885,9 @@ begin
       from fleetcare.profiles p
       join fleetcare.vehicles v on v.tenant_id = new.tenant_id and v.id = new.vehicle_id
      where p.tenant_id = new.tenant_id and p.active
-       and p.role in ('admin', 'fleet_manager')
+       and (p.role in ('admin', 'fleet_manager')
+            or (p.role = 'equipment_manager'
+                and (new.equipment_id is not null or new.area = 'equipment')))
        and p.id <> new.reported_by_id;
   end if;
   return null;
@@ -661,6 +909,11 @@ begin
     select tablename from pg_tables where schemaname = 'fleetcare'
   loop
     execute format('alter table fleetcare.%I enable row level security', t);
+    -- senza un ruolo valido non si vede e non si scrive niente
+    execute format(
+      'create policy known_role on fleetcare.%I as restrictive to fleetcare_app
+       using (fleetcare.app_has_role(''crew'', ''fleet_manager'', ''equipment_manager'', ''admin_finance'', ''admin''))
+       with check (fleetcare.app_has_role(''crew'', ''fleet_manager'', ''equipment_manager'', ''admin_finance'', ''admin''))', t);
     if t = 'tenants' then
       execute 'create policy tenant_isolation on fleetcare.tenants to fleetcare_app
                using (id = fleetcare.app_tenant_id())
@@ -747,10 +1000,13 @@ begin
 
   -- 2d. registri dell'equipaggio: chiunque inserisce (a proprio nome, 2e),
   -- solo i responsabili correggono o cancellano
-  foreach t in array array['fault_reports', 'fuel_logs', 'odometer_readings', 'attachments'] loop
+  foreach t in array array['fault_reports', 'fuel_logs', 'odometer_readings'] loop
     perform fleetcare._restrict(t, 'update', staff);
     perform fleetcare._restrict(t, 'delete', ops);
   end loop;
+  -- un allegato non si modifica (si cancella e si ricarica): un update
+  -- potrebbe cambiare il documento o renderlo visibile a chi non deve
+  perform fleetcare._restrict('attachments', 'update', array['admin']);
   -- le sanificazioni sono documentazione: le corregge solo la direzione
   perform fleetcare._restrict('sanitizations', 'update', array['admin']);
   perform fleetcare._restrict('sanitizations', 'delete', array['admin']);
@@ -800,6 +1056,15 @@ begin
   end loop;
 end
 $$;
+
+-- una segnalazione dell'equipaggio nasce aperta: presa in carico, esito e
+-- intervento collegato li scrivono i responsabili
+create policy fault_reports_insert_open on fleetcare.fault_reports as restrictive
+  for insert to fleetcare_app
+  with check (
+    fleetcare.app_is_staff()
+    or (status = 'open' and maintenance_job_id is null and acknowledged_at is null
+        and resolved_at is null and resolution_note is null and rejected_reason is null));
 
 -- adempimenti: li registrano i responsabili; l'equipaggio solo per i tipi
 -- che lo prevedono (la sanificazione periodica) e a proprio nome
@@ -872,7 +1137,19 @@ create policy attachments_insert_role on fleetcare.attachments as restrictive
     (fleetcare.app_is_staff()
      and (entity_type <> 'fuel_invoice' or fleetcare.app_has_role('admin', 'admin_finance')))
     or (uploaded_by_id = fleetcare.app_user_id()
-        and entity_type in ('fault_report', 'checklist')));
+        and ((entity_type = 'fault_report'
+              and exists (select 1 from fleetcare.fault_reports f
+                           where f.id = entity_id and f.reported_by_id = fleetcare.app_user_id()))
+             or (entity_type = 'checklist'
+                 and exists (select 1 from fleetcare.checklists c
+                              where c.id = entity_id and c.performed_by_id = fleetcare.app_user_id()
+                                and c.submitted_at is null)))));
+-- i documenti di una fattura li toglie l'amministrazione (che li carica),
+-- gli altri i responsabili dei mezzi
+create policy attachments_delete_role on fleetcare.attachments as restrictive
+  for delete to fleetcare_app
+  using (case when entity_type = 'fuel_invoice' then fleetcare.app_has_role('admin', 'admin_finance')
+              else fleetcare.app_has_role('admin', 'fleet_manager') end);
 
 -- commenti alle segnalazioni: l'equipaggio non vede né scrive le note
 -- interne; ognuno scrive a proprio nome; non si modificano, li cancella
@@ -929,4 +1206,4 @@ create policy notifications_insert_role on fleetcare.notifications as restrictiv
   for insert to fleetcare_app with check (fleetcare.app_is_staff());
 create policy notifications_delete_own on fleetcare.notifications as restrictive
   for delete to fleetcare_app
-  using (recipient_id = fleetcare.app_user_id() or fleetcare.app_has_role('admin'));
+  using (recipient_id = fleetcare.app_user_id());

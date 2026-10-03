@@ -164,6 +164,15 @@ export const vehicles = fleetcareSchema.table(
       .where(sql`${t.fuelVehicleCode} is not null`),
     index("vehicles_tenant_status_idx").on(t.tenantId, t.status),
     check("vehicles_odometer_ck", sql`${t.odometerKm} >= 0 and ${t.initialOdometerKm} >= 0`),
+    /* un codice vuoto (o di soli spazi e trattini) non è un codice: nasconderebbe
+       il numero interno al riconoscimento e occuperebbe l'indice unico */
+    check(
+      "vehicles_codes_ck",
+      sql`regexp_replace(upper(${t.internalCode}), '[^A-Z0-9]', '', 'g') <> ''
+          and regexp_replace(upper(${t.plate}), '[^A-Z0-9]', '', 'g') <> ''
+          and (${t.fuelVehicleCode} is null
+               or regexp_replace(upper(${t.fuelVehicleCode}), '[^A-Z0-9]', '', 'g') <> '')`,
+    ),
     tenantFk("vehicles_site_id_fk", t.tenantId, t.siteId, sites),
   ],
 );

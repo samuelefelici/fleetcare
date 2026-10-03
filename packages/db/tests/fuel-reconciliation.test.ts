@@ -81,6 +81,11 @@ describe("riconoscimento del mezzo dalla matricola", () => {
     expect(resolveVehicleId("7", doppi)).toBeNull();
   });
 
+  it("una matricola del distributore vuota non nasconde il numero interno", () => {
+    const conVuota = [{ id: "a", plate: "AA111AA", internalCode: "9", fuelVehicleCode: "  -  " }];
+    expect(resolveVehicleId("9", conVuota)).toBe("a");
+  });
+
   it("matricola sconosciuta o vuota", () => {
     expect(resolveVehicleId("99", vehicles)).toBeNull();
     expect(resolveVehicleId("", vehicles)).toBeNull();
@@ -229,6 +234,133 @@ describe("reconcileFuel", () => {
     );
     expect(r.lines[0]).toMatchObject({ status: "matched", fuelLogId: "F" });
     expect(r.lines[0]?.reason).toBe("stesso buono (litri e importo non confrontabili)");
+  });
+
+  it("stesso buono ma mezzo diverso: non è lo stesso rifornimento", () => {
+    const r = reconcileFuel(
+      [line("L", { receiptNumber: "7", vehicleId: "amb1" })],
+      [log("F", { receiptNumber: "7", vehicleId: "amb2" })],
+    );
+    expect(r.lines[0]?.status).toBe("unmatched");
+  });
+
+  it("stesso buono ma prodotto diverso: non è lo stesso rifornimento", () => {
+    const r = reconcileFuel(
+      [line("L", { receiptNumber: "7", product: "adblue", vehicleId: null })],
+      [log("F", { receiptNumber: "7" })],
+    );
+    expect(r.lines[0]?.status).toBe("unmatched");
+  });
+
+  it("il risultato non dipende dall'ordine di righe e rifornimenti", () => {
+    const logs = [
+      log("F1", { liters: 20, amountEur: 35 }),
+      log("F2", { liters: 20.3, amountEur: 35.3 }),
+      log("F3", { liters: 20.1, amountEur: 35.1, refueledOn: "2026-09-11" }),
+    ];
+    const lines = [
+      line("L1", { liters: 20.1, amountEur: 35.1 }),
+      line("L2", { liters: 20.2, amountEur: 35.2 }),
+      line("L3", { liters: 20, amountEur: 35, refueledOn: "2026-09-11" }),
+    ];
+    const key = (r: ReturnType<typeof reconcileFuel>) =>
+      JSON.stringify(r.lines.map((l) => [l.lineId, l.fuelLogId]).sort());
+    const a = key(reconcileFuel(lines, logs));
+    const b = key(reconcileFuel([...lines].reverse(), [...logs].reverse()));
+    expect(b).toBe(a);
+  });
+
+  it("assegnazione ottima: su 40 casi coincide con la forza bruta (coppie, poi distanza)", () => {
+    // generatore deterministico: niente casualità nei test
+    let seed = 7;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
+    const days = ["2026-09-10", "2026-09-11", "2026-09-12"];
+    const cost = (l: InvoiceLineForMatch, f: FuelLogForMatch) => {
+      const d = Math.abs(days.indexOf(l.refueledOn) - days.indexOf(f.refueledOn));
+      const lit = Math.abs((l.liters ?? 0) - f.liters);
+      const amt = Math.abs(l.amountEur - (f.amountEur ?? 0));
+      return d <= 1 && lit <= 0.5 + 1e-9 && amt <= 0.5 + 1e-9
+        ? d * 1_000_000 + Math.round(lit * 100) * 1_000 + Math.round(amt * 100)
+        : null;
+    };
+    // l'ottimo vero: per ogni permutazione dei rifornimenti, quante coppie e che costo
+    const brute = (lines: InvoiceLineForMatch[], logs: FuelLogForMatch[]) => {
+      let best = { pairs: -1, total: Infinity };
+      const rec = (i: number, used: Set<number>, pairs: number, total: number) => {
+        if (i === lines.length) {
+          if (pairs > best.pairs || (pairs === best.pairs && total < best.total))
+            best = { pairs, total };
+          return;
+        }
+        rec(i + 1, used, pairs, total); // riga senza abbinamento
+        logs.forEach((f, j) => {
+          const c = used.has(j) ? null : cost(lines[i]!, f);
+          if (c === null) return;
+          used.add(j);
+          rec(i + 1, used, pairs + 1, total + c);
+          used.delete(j);
+        });
+      };
+      rec(0, new Set(), 0, 0);
+      return best;
+    };
+    for (let k = 0; k < 40; k++) {
+      const mk = (prefix: string, n: number) =>
+        Array.from({ length: n }, (_, i) => {
+          const liters = 30 + Math.round(rnd() * 80) / 100; // 30,00–30,80
+          return {
+            id: `${prefix}${i}`,
+            refueledOn: days[Math.floor(rnd() * 3)]!,
+            liters,
+            amountEur: Math.round(liters * 175) / 100,
+          };
+        });
+      const lines = mk("L", 4).map((x) => line(x.id, x));
+      const logs = mk("F", 4).map((x) => log(x.id, x));
+      const expected = brute(lines, logs);
+      const r = reconcileFuel(lines, logs);
+      const matched = r.lines.filter((l) => l.status === "matched");
+      const total = matched.reduce(
+        (sum, l) =>
+          sum +
+          cost(
+            lines.find((x) => x.id === l.lineId)!,
+            logs.find((f) => f.id === l.fuelLogId)!,
+          )!,
+        0,
+      );
+      expect([k, matched.length, total]).toEqual([k, expected.pairs, expected.total]);
+    }
+  });
+
+  it("assegnazione ottima: una riga esatta non perde il suo pieno se l'altra ha un'alternativa libera", () => {
+    const logs = [
+      log("X", { liters: 30, amountEur: 50 }),
+      log("Y", { liters: 30.4, amountEur: 50.4 }),
+      log("Z", { liters: 30.3, amountEur: 50.3 }),
+    ];
+    const lines = [
+      line("L1", { liters: 30, amountEur: 50 }),
+      line("L2", { liters: 30.3, amountEur: 50.3 }),
+    ];
+    const r = reconcileFuel(lines, logs);
+    expect(Object.fromEntries(r.lines.map((l) => [l.lineId, l.fuelLogId]))).toEqual({
+      L1: "X",
+      L2: "Z",
+    });
+  });
+
+  it("un buono che non torna non si prende il rifornimento che un'altra riga abbina davvero", () => {
+    const logs = [log("F", { receiptNumber: "3", liters: 40, amountEur: 70 })];
+    const lines = [
+      line("Lbuono", { receiptNumber: "3", liters: 55, amountEur: 96 }),
+      line("Lgiusta", { liters: 40, amountEur: 70 }),
+    ];
+    const r = reconcileFuel(lines, logs);
+    expect(Object.fromEntries(r.lines.map((l) => [l.lineId, [l.fuelLogId, l.status]]))).toEqual({
+      Lbuono: [null, "unmatched"],
+      Lgiusta: ["F", "matched"],
+    });
   });
 
   it("un rifornimento si abbina a una riga sola", () => {

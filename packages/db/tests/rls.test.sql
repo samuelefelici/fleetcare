@@ -119,6 +119,7 @@ insert into fleetcare.deadline_types (id, tenant_id, code, label, subject, alert
   ('a0000000-0000-0000-0000-00000000ca01', 'a0000000-0000-0000-0000-000000000000', 'revisione', 'Revisione', 'vehicle', 60, false),
   ('a0000000-0000-0000-0000-00000000ca02', 'a0000000-0000-0000-0000-000000000000', 'prova', 'Prova', 'vehicle', 30, false),
   ('a0000000-0000-0000-0000-00000000ca03', 'a0000000-0000-0000-0000-000000000000', 'sanificazione', 'Sanificazione', 'vehicle', 5, true);
+update fleetcare.deadline_types set interval_days = 30 where id = 'a0000000-0000-0000-0000-00000000ca03';
 insert into fleetcare.deadlines (id, tenant_id, deadline_type_id, vehicle_id, label, due_on) values
   ('a0000000-0000-0000-0000-00000000cb01', 'a0000000-0000-0000-0000-000000000000',
    'a0000000-0000-0000-0000-00000000ca01', 'a0000000-0000-0000-0000-00000000d001', '', '2027-03-31'),
@@ -174,8 +175,6 @@ do $$ begin
 
   assert (select count(*) from fleetcare.push_subscriptions) = 0, 'crew: non vede i dispositivi degli altri';
   assert (select count(*) from fleetcare.fault_report_comments) = 1, 'crew: non vede le note interne';
-
-  assert fleetcare.next_document_number('SGN', 2026) = 'SGN-2026-00001', 'crew: numera le segnalazioni';
 end $$;
 
 -- crew registra a proprio nome
@@ -194,21 +193,48 @@ insert into fleetcare.sanitizations (id, tenant_id, vehicle_id, kind, performed_
 insert into fleetcare.attachments (tenant_id, entity_type, entity_id, file_name, mime_type, size_bytes, storage_path, uploaded_by_id) values
   ('a0000000-0000-0000-0000-000000000000', 'fault_report', 'a0000000-0000-0000-0000-00000000b901',
    'spia.jpg', 'image/jpeg', 1, 'x/spia.jpg', 'a0000000-0000-0000-0000-00000000c001');
+-- la propria bozza di check-list, con la foto di un'anomalia
+insert into fleetcare.checklists (id, tenant_id, vehicle_id, template_id, performed_by_id) values
+  ('a0000000-0000-0000-0000-00000000b402', 'a0000000-0000-0000-0000-000000000000',
+   'a0000000-0000-0000-0000-00000000d001', 'a0000000-0000-0000-0000-00000000b301',
+   'a0000000-0000-0000-0000-00000000c001');
+insert into fleetcare.attachments (tenant_id, entity_type, entity_id, file_name, mime_type, size_bytes, storage_path, uploaded_by_id) values
+  ('a0000000-0000-0000-0000-000000000000', 'checklist', 'a0000000-0000-0000-0000-00000000b402',
+   'luce.jpg', 'image/jpeg', 1, 'x/luce.jpg', 'a0000000-0000-0000-0000-00000000c001');
 insert into fleetcare.push_subscriptions (tenant_id, profile_id, endpoint, p256dh, auth) values
   ('a0000000-0000-0000-0000-000000000000', 'a0000000-0000-0000-0000-00000000c001', 'https://push.example/crew', 'k', 'a');
 insert into fleetcare.fault_report_comments (tenant_id, fault_report_id, author_id, body) values
   ('a0000000-0000-0000-0000-000000000000', 'a0000000-0000-0000-0000-00000000b901',
    'a0000000-0000-0000-0000-00000000c001', 'Ecco la foto');
--- la sanificazione periodica la chiude l'equipaggio stesso
-insert into fleetcare.deadline_completions (tenant_id, deadline_id, done_on, next_due_on, sanitization_id, recorded_by_id) values
-  ('a0000000-0000-0000-0000-000000000000', 'a0000000-0000-0000-0000-00000000cb04', '2026-09-10', '2026-10-10',
+-- la sanificazione periodica la chiude l'equipaggio stesso. Date e costo
+-- scelti dal client (2099, 99.999 €) si ignorano: decide il database
+insert into fleetcare.deadline_completions (tenant_id, deadline_id, done_on, next_due_on, cost_eur, sanitization_id, recorded_by_id) values
+  ('a0000000-0000-0000-0000-000000000000', 'a0000000-0000-0000-0000-00000000cb04', '2099-01-01', '2099-12-31', 99999,
    'a0000000-0000-0000-0000-00000000b701', 'a0000000-0000-0000-0000-00000000c001');
 
 do $$
 declare n int;
 begin
-  assert (select due_on from fleetcare.deadlines where id = 'a0000000-0000-0000-0000-00000000cb04') = '2026-10-10',
-    'crew: la sanificazione periodica registrata sposta la scadenza';
+  assert (select (due_on, last_done_on) from fleetcare.deadlines where id = 'a0000000-0000-0000-0000-00000000cb04')
+         = ((now() at time zone 'Europe/Rome')::date + 30, (now() at time zone 'Europe/Rome')::date),
+    'crew: la sanificazione sposta la scadenza di 30 giorni dal giorno in cui è stata fatta, non dalla data mandata';
+  assert (select cost_eur is null from fleetcare.deadline_completions
+          where sanitization_id = 'a0000000-0000-0000-0000-00000000b701'),
+    'crew: il costo di un adempimento dell''equipaggio non si scrive';
+  begin
+    insert into fleetcare.deadline_completions (tenant_id, deadline_id, done_on, sanitization_id, recorded_by_id)
+    values ('a0000000-0000-0000-0000-000000000000', 'a0000000-0000-0000-0000-00000000cb04', '2026-10-01',
+            'a0000000-0000-0000-0000-00000000b701', 'a0000000-0000-0000-0000-00000000c001');
+    raise exception 'FAIL crew: la stessa sanificazione ha chiuso la scadenza due volte';
+  exception when unique_violation then null;
+  end;
+  begin
+    insert into fleetcare.deadline_completions (tenant_id, deadline_id, done_on, recorded_by_id)
+    values ('a0000000-0000-0000-0000-000000000000', 'a0000000-0000-0000-0000-00000000cb04', '2026-10-01',
+            'a0000000-0000-0000-0000-00000000c001');
+    raise exception 'FAIL crew: sanificazione periodica chiusa senza nessuna sanificazione';
+  exception when insufficient_privilege then null;
+  end;
 
   update fleetcare.profile_accounts set phone = '333 9' where profile_id = 'a0000000-0000-0000-0000-00000000c001';
   get diagnostics n = row_count;
@@ -278,6 +304,20 @@ begin
   exception when insufficient_privilege then null;
   end;
   begin
+    insert into fleetcare.attachments (tenant_id, entity_type, entity_id, file_name, mime_type, size_bytes, storage_path, uploaded_by_id)
+    values ('a0000000-0000-0000-0000-000000000000', 'checklist', 'a0000000-0000-0000-0000-00000000b401',
+            'x.jpg', 'image/jpeg', 1, 'x/x.jpg', 'a0000000-0000-0000-0000-00000000c001');
+    raise exception 'FAIL crew: allegato alla check-list di un altro';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    insert into fleetcare.attachments (tenant_id, entity_type, entity_id, file_name, mime_type, size_bytes, storage_path, uploaded_by_id)
+    values ('a0000000-0000-0000-0000-000000000000', 'fault_report', 'a0000000-0000-0000-0000-00000000b101',
+            'x.jpg', 'image/jpeg', 1, 'x/x.jpg', 'a0000000-0000-0000-0000-00000000c001');
+    raise exception 'FAIL crew: allegato «segnalazione» con l''id di una fattura';
+  exception when insufficient_privilege or foreign_key_violation then null;
+  end;
+  begin
     insert into fleetcare.push_subscriptions (tenant_id, profile_id, endpoint, p256dh, auth)
     values ('a0000000-0000-0000-0000-000000000000', 'a0000000-0000-0000-0000-00000000c002',
             'https://push.example/finto', 'k', 'a');
@@ -298,7 +338,7 @@ begin
     values ('a0000000-0000-0000-0000-000000000000', 'maintenance_job', 'a0000000-0000-0000-0000-00000000b201',
             'x.pdf', 'application/pdf', 1, 'x/x.pdf', 'a0000000-0000-0000-0000-00000000c001');
     raise exception 'FAIL crew: allegato a un intervento';
-  exception when insufficient_privilege then null;
+  exception when insufficient_privilege or foreign_key_violation then null; -- non vede l'intervento
   end;
   begin
     insert into fleetcare.deadline_completions (tenant_id, deadline_id, done_on, recorded_by_id)
@@ -313,9 +353,18 @@ begin
     raise exception 'FAIL crew: ha scritto una notifica';
   exception when insufficient_privilege then null;
   end;
+  -- il numero lo assegna il database: quello mandato dall'app si ignora
+  insert into fleetcare.fault_reports (id, tenant_id, number, vehicle_id, description, severity, reported_by_id)
+  values ('a0000000-0000-0000-0000-00000000b902', 'a0000000-0000-0000-0000-000000000000', 'SGN-2026-99999',
+          'a0000000-0000-0000-0000-00000000d001', 'Numero scelto da me', 'green', 'a0000000-0000-0000-0000-00000000c001');
+  assert (select number from fleetcare.fault_reports where id = 'a0000000-0000-0000-0000-00000000b902')
+         = 'SGN-' || extract(year from now() at time zone 'Europe/Rome')::int || '-00003',
+    'numerazione: il database ignora il numero del client e assegna il successivo';
   begin
-    perform fleetcare.next_document_number('MAN', 2026);
-    raise exception 'FAIL crew: ha numerato un intervento';
+    insert into fleetcare.fault_reports (tenant_id, vehicle_id, description, severity, reported_by_id, status)
+    values ('a0000000-0000-0000-0000-000000000000', 'a0000000-0000-0000-0000-00000000d001',
+            'Già risolta', 'green', 'a0000000-0000-0000-0000-00000000c001', 'resolved');
+    raise exception 'FAIL crew: segnalazione nata già risolta';
   exception when insufficient_privilege then null;
   end;
   begin
@@ -357,15 +406,19 @@ insert into fleetcare.fault_reports (tenant_id, number, vehicle_id, description,
 -- ================= ruolo assente o sconosciuto: si chiude, non si apre =================
 set app.role = 'qualcosa';
 do $$ begin
-  assert (select count(*) from fleetcare.fault_report_comments where internal) = 0,
-    'ruolo sconosciuto: niente note interne';
+  assert (select count(*) from fleetcare.vehicles) = 0, 'ruolo sconosciuto: non vede nemmeno i mezzi';
+  assert (select count(*) from fleetcare.fault_report_comments) = 0, 'ruolo sconosciuto: nessun commento';
   begin
     insert into fleetcare.fuel_logs (tenant_id, vehicle_id, refueled_at, liters, recorded_by_id)
     values ('a0000000-0000-0000-0000-000000000000', 'a0000000-0000-0000-0000-00000000d001', now(), 10,
-            'a0000000-0000-0000-0000-00000000c002');
-    raise exception 'FAIL: con un ruolo sconosciuto si registra a nome di un altro';
+            'a0000000-0000-0000-0000-00000000c001');
+    raise exception 'FAIL: con un ruolo sconosciuto si registra (anche a proprio nome)';
   exception when insufficient_privilege then null;
   end;
+end $$;
+set app.role = '';
+do $$ begin
+  assert (select count(*) from fleetcare.vehicles) = 0, 'ruolo assente: non vede niente';
 end $$;
 
 -- ================= responsabile mezzi di A =================
@@ -379,11 +432,10 @@ begin
     'segnalazione rossa: il responsabile mezzi riceve l''avviso dal database';
   assert (select count(*) from fleetcare.fuel_invoices) = 1, 'fleet_manager: legge le fatture per verificarle';
   assert (select count(*) from fleetcare.maintenance_jobs) = 1, 'fleet_manager: legge gli interventi';
-  assert (select count(*) from fleetcare.attachments) = 4, 'fleet_manager: legge tutti gli allegati';
+  assert (select count(*) from fleetcare.attachments) = 5, 'fleet_manager: legge tutti gli allegati';
   assert (select count(*) from fleetcare.fault_report_comments) = 3, 'fleet_manager: vede anche le note interne';
   assert (select count(*) from fleetcare.push_subscriptions) = 2, 'fleet_manager: legge i dispositivi per gli avvisi';
   assert (select count(*) from fleetcare.profile_accounts) = 1, 'fleet_manager: vede solo i propri recapiti';
-  assert fleetcare.next_document_number('MAN', 2026) = 'MAN-2026-00001', 'fleet_manager: numera gli interventi';
 
   -- registrare per conto di un volontario (il buono di carta portato in sede)
   insert into fleetcare.fuel_logs (tenant_id, vehicle_id, refueled_at, liters, recorded_by_id)
@@ -401,6 +453,21 @@ begin
   update fleetcare.fault_report_comments set body = 'altro';
   get diagnostics n = row_count;
   assert n = 0, 'fleet_manager: un commento inviato non si modifica';
+
+  update fleetcare.attachments set entity_type = 'vehicle', entity_id = 'a0000000-0000-0000-0000-00000000d001'
+   where entity_type = 'maintenance_job';
+  get diagnostics n = row_count;
+  assert n = 0, 'fleet_manager: un allegato non si modifica (si renderebbe visibile all''equipaggio)';
+  delete from fleetcare.attachments where entity_type = 'fuel_invoice';
+  get diagnostics n = row_count;
+  assert n = 0, 'fleet_manager: i documenti delle fatture li toglie solo l''amministrazione';
+  begin
+    insert into fleetcare.attachments (tenant_id, entity_type, entity_id, file_name, mime_type, size_bytes, storage_path, uploaded_by_id)
+    values ('a0000000-0000-0000-0000-000000000000', 'vehicle', gen_random_uuid(),
+            'x.pdf', 'application/pdf', 1, 'x/x.pdf', 'a0000000-0000-0000-0000-00000000f001');
+    raise exception 'FAIL: allegato a un mezzo che non esiste';
+  exception when foreign_key_violation then null;
+  end;
 
   -- la check-list di un volontario: né la compila al suo posto né ci aggiunge risposte
   begin
@@ -473,6 +540,8 @@ set app.role = 'equipment_manager';
 do $$
 declare n int;
 begin
+  assert (select count(*) from fleetcare.notifications) = 0,
+    'equipment_manager: un guasto ai freni non è affar suo, nessun avviso';
   insert into fleetcare.equipment_types (id, tenant_id, code, label, "group")
   values ('a0000000-0000-0000-0000-00000000b601', 'a0000000-0000-0000-0000-000000000000', 'dae', 'DAE', 'electromedical');
   insert into fleetcare.equipment (tenant_id, equipment_type_id, vehicle_id, serial_number)
@@ -488,7 +557,16 @@ end $$;
 set app.user_id = 'a0000000-0000-0000-0000-00000000a001';
 set app.role = 'admin_finance';
 
-do $$ begin
+do $$
+declare n int;
+begin
+  delete from fleetcare.attachments where entity_type = 'vehicle';
+  get diagnostics n = row_count;
+  assert n = 0, 'admin_finance: i documenti dei mezzi li toglie il responsabile mezzi';
+  delete from fleetcare.attachments where entity_type = 'fuel_invoice';
+  get diagnostics n = row_count;
+  assert n = 1, 'admin_finance: toglie i documenti delle fatture che carica';
+
   insert into fleetcare.fuel_invoices (tenant_id, supplier_id, number, issued_on, period_from, period_to, total_amount_eur)
   values ('a0000000-0000-0000-0000-000000000000', 'a0000000-0000-0000-0000-00000000b001',
           '2026/10', '2026-10-31', '2026-10-01', '2026-10-31', 1);

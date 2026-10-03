@@ -80,6 +80,13 @@ export const deadlineTypes = fleetcareSchema.table(
      * falso: si conta da quando il lavoro è stato fatto.
      */
     renewFromDue: boolean("renew_from_due").notNull().default(false),
+    /**
+     * Con `renew_from_due`: entro quanti giorni dalla scadenza un rinnovo
+     * tardivo conserva l'anniversario (RCA: 15, art. 1901 c.c.). Oltre, il
+     * nuovo periodo parte dal pagamento. Nullo = calendario fisso, non si
+     * riparte mai dal pagamento (bollo).
+     */
+    renewGraceDays: integer("renew_grace_days"),
     alertDays: integer("alert_days").notNull().default(30),
     alertKm: integer("alert_km"),
     /** superata, il mezzo/attrezzatura non è utilizzabile (revisione, RCA, elettrodi scaduti…) */
@@ -110,6 +117,16 @@ export const deadlineTypes = fleetcareSchema.table(
       "deadline_types_interval_ck",
       sql`not (${t.intervalMonths} is not null and ${t.intervalDays} is not null)`,
     ),
+    /* periodicità positive, preavvisi e tolleranza non negativi: uno 0
+       scritto per sbaglio farebbe scadere l'adempimento il giorno stesso */
+    check(
+      "deadline_types_values_ck",
+      sql`${t.intervalMonths} > 0 and ${t.intervalDays} > 0 and ${t.intervalKm} > 0
+          and ${t.alertDays} >= 0 and ${t.alertKm} >= 0 and ${t.renewGraceDays} >= 0`,
+    ),
+    /* la prossima scadenza di un adempimento dell'equipaggio la calcola il
+       database senza rinnovo dalla scadenza: le due cose non vanno insieme */
+    check("deadline_types_crew_renew_ck", sql`not (${t.completedByCrew} and ${t.renewFromDue})`),
   ],
 );
 
@@ -168,6 +185,12 @@ export const deadlineRules = fleetcareSchema.table(
       "deadline_rules_interval_ck",
       sql`not (${t.intervalMonths} is not null and ${t.intervalDays} is not null)`,
     ),
+    /* come sul tipo; un valore nullo passa (eredita) */
+    check(
+      "deadline_rules_values_ck",
+      sql`${t.intervalMonths} > 0 and ${t.intervalDays} > 0 and ${t.intervalKm} > 0
+          and ${t.alertDays} >= 0 and ${t.alertKm} >= 0`,
+    ),
     tenantFk(
       "deadline_rules_deadline_type_id_fk",
       t.tenantId,
@@ -220,9 +243,22 @@ export const deadlines = fleetcareSchema.table(
     alertDays: integer("alert_days"),
     alertKm: integer("alert_km"),
     blocking: boolean("blocking"),
-    /* la scadenza vera e propria: spostata in avanti dagli adempimenti (trigger) */
+    /**
+     * La scadenza vera e propria: la più lontana fra la base qui sotto e
+     * la prossima scadenza dell'ultimo adempimento valido. La calcola il
+     * database (trigger); l'app la scrive solo per correggerla a mano, e
+     * quel valore diventa la nuova base.
+     */
     dueOn: date("due_on"),
     dueKm: integer("due_km"),
+    /**
+     * La base: la scadenza scritta a mano o letta dal documento, prima e a
+     * prescindere dagli adempimenti registrati. Serve a tornare indietro
+     * giusti quando un adempimento si cancella, e fa sì che uno storico
+     * vecchio caricato dopo non riporti indietro una scadenza più recente.
+     */
+    baseDueOn: date("base_due_on"),
+    baseDueKm: integer("base_due_km"),
     /** ultimo adempimento valido: lo scrive il trigger su `deadline_completions` */
     lastDoneOn: date("last_done_on"),
     lastDoneKm: integer("last_done_km"),
@@ -256,6 +292,12 @@ export const deadlines = fleetcareSchema.table(
     check(
       "deadlines_interval_ck",
       sql`not (${t.intervalMonths} is not null and ${t.intervalDays} is not null)`,
+    ),
+    /* come sul tipo; un valore nullo passa (eredita) */
+    check(
+      "deadlines_values_ck",
+      sql`${t.intervalMonths} > 0 and ${t.intervalDays} > 0 and ${t.intervalKm} > 0
+          and ${t.alertDays} >= 0 and ${t.alertKm} >= 0`,
     ),
     tenantFk("deadlines_deadline_type_id_fk", t.tenantId, t.deadlineTypeId, deadlineTypes),
     tenantFk("deadlines_vehicle_id_fk", t.tenantId, t.vehicleId, vehicles, "cascade"),
@@ -306,6 +348,10 @@ export const deadlineCompletions = fleetcareSchema.table(
   },
   (t) => [
     index("deadline_completions_deadline_idx").on(t.tenantId, t.deadlineId, t.doneOn),
+    /* una sanificazione chiude la scadenza una volta sola */
+    uniqueIndex("deadline_completions_sanitization_uq")
+      .on(t.deadlineId, t.sanitizationId)
+      .where(sql`${t.sanitizationId} is not null`),
     tenantFk("deadline_completions_deadline_id_fk", t.tenantId, t.deadlineId, deadlines),
     tenantFk("deadline_completions_supplier_id_fk", t.tenantId, t.supplierId, suppliers),
     tenantFk(
@@ -346,6 +392,8 @@ export const deadlinesEffective = fleetcareSchema
     label: text("label").notNull(),
     dueOn: date("due_on"),
     dueKm: integer("due_km"),
+    baseDueOn: date("base_due_on"),
+    baseDueKm: integer("base_due_km"),
     lastDoneOn: date("last_done_on"),
     lastDoneKm: integer("last_done_km"),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
@@ -357,6 +405,7 @@ export const deadlinesEffective = fleetcareSchema
     blocking: boolean("blocking").notNull(),
     monthEnd: boolean("month_end").notNull(),
     renewFromDue: boolean("renew_from_due").notNull(),
+    renewGraceDays: integer("renew_grace_days"),
     /** la scadenza ha almeno un valore corretto a mano */
     overridden: boolean("overridden").notNull(),
   })

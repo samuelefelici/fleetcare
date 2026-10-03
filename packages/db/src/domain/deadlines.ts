@@ -19,6 +19,12 @@ export interface DeadlineInterval {
   monthEnd?: boolean;
   /** si conta dalla scadenza precedente e non dal giorno dell'adempimento (RCA, bollo) */
   renewFromDue?: boolean;
+  /**
+   * Con `renewFromDue`: entro quanti giorni dalla scadenza un rinnovo
+   * tardivo conserva l'anniversario (RCA: 15). Nullo = calendario fisso,
+   * l'anniversario non si perde mai (bollo).
+   */
+  renewGraceDays?: number | null;
 }
 
 export interface NextDue {
@@ -106,10 +112,11 @@ function addInterval(from: IsoDate, interval: DeadlineInterval): IsoDate | null 
  * autorizzazione) restituisce null: la data nuova si legge dal documento.
  *
  * Con `renewFromDue` (RCA, bollo) si conta dalla scadenza precedente
- * `previousDueOn`: la polizza rinnovata in anticipo o nei giorni di
- * tolleranza scade comunque all'anniversario. Se però l'anniversario così
- * calcolato è già passato (un mezzo rimasto fermo e scoperto per mesi), il
- * nuovo periodo parte dall'adempimento.
+ * `previousDueOn`, avanzando di periodi interi fino a superare il giorno
+ * dell'adempimento: la polizza rinnovata in anticipo o nei giorni di
+ * tolleranza scade comunque all'anniversario, il bollo pagato in ritardo
+ * resta sul suo mese. Con `renewGraceDays`, un rinnovo arrivato oltre la
+ * tolleranza è un contratto nuovo e il periodo parte dall'adempimento.
  */
 export function nextDue(
   doneOn: IsoDate,
@@ -120,11 +127,18 @@ export function nextDue(
   if (interval.months && interval.days) {
     throw new Error("Periodicità in mesi o in giorni, non entrambe");
   }
+  if ((interval.months ?? 0) < 0 || (interval.days ?? 0) < 0) {
+    throw new Error("Periodicità negativa");
+  }
   parse(doneOn);
   let dueOn = addInterval(doneOn, interval);
   if (dueOn && interval.renewFromDue && previousDueOn) {
-    const fromDue = addInterval(previousDueOn, interval);
-    if (fromDue && daysBetween(doneOn, fromDue) > 0) dueOn = fromDue;
+    const grace = interval.renewGraceDays ?? null;
+    if (grace === null || daysBetween(previousDueOn, doneOn) <= grace) {
+      let next = addInterval(previousDueOn, interval)!;
+      while (daysBetween(doneOn, next) <= 0) next = addInterval(next, interval)!;
+      dueOn = next;
+    }
   }
   const dueKm = interval.km && doneKm !== null ? doneKm + interval.km : null;
   return { dueOn, dueKm };
@@ -267,7 +281,7 @@ export function resolveRule(
 /**
  * I valori effettivi di una scadenza: la correzione a mano, altrimenti la
  * regola, altrimenti il tipo. È la stessa catena della vista SQL
- * `deadlines_effective` (tests/deadlines.test.sql verifica che coincidano).
+ * `deadlines_effective` (tests/effective.dbtest.ts verifica che coincidano).
  */
 export function effectiveDeadline(
   type: DeadlineTypeDefaults,

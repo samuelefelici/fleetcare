@@ -3,17 +3,22 @@
  * registrati dall'equipaggio. Logica pura: righe in ingresso, esito per
  * riga in uscita. Chi chiama scrive l'esito su `fuel_invoice_lines`.
  *
- * Tre passate, dalla prova più forte alla più debole:
- *   1. stesso numero di buono/scontrino
- *   2. stesso mezzo, stesso prodotto, data vicina, litri e importo che tornano
- *   3. stesso mezzo e data vicina ma numeri che NON tornano → `mismatch`
- *      (c'è un rifornimento candidato: va guardato, non ignorato)
+ * Quattro passate, dalla prova più forte alla più debole:
+ *   1. stesso numero di buono (stesso prodotto, data vicina) con numeri che
+ *      tornano o che non si possono confrontare;
+ *   2. stesso mezzo, prodotto e data, litri e importo entro tolleranza:
+ *      l'assegnazione ottima (il massimo numero di coppie e, a parità, la
+ *      distanza complessiva minima);
+ *   3. stesso buono ma numeri che NON tornano → `mismatch`;
+ *   4. stesso mezzo, prodotto e data ma numeri che non tornano → `mismatch`
+ *      (c'è un rifornimento candidato: va guardato, non ignorato).
  * Le righe rimaste sono `unmatched`: fatturate ma mai registrate. I
  * rifornimenti rimasti sono registrati ma non fatturati.
  *
- * Ogni rifornimento si abbina a una riga sola, e nelle passate 2 e 3 vince
- * la coppia più vicina in assoluto, non la prima trovata: con un mezzo che
- * fa due pieni lo stesso giorno, l'ordine delle righe non deve decidere.
+ * Ogni rifornimento si abbina a una riga sola, e il risultato non dipende
+ * dall'ordine in cui arrivano righe e rifornimenti: le coppie si scelgono
+ * dalla più vicina in assoluto (a parità, per id). Un `mismatch` non si
+ * prende mai un rifornimento che un'altra riga abbinerebbe davvero.
  */
 
 import { daysBetween, type IsoDate } from "./deadlines";
@@ -79,7 +84,7 @@ export function normalizePlate(raw: string): string {
  * stesso mezzo: il distributore e l'associazione non li scrivono uguali).
  */
 export function normalizeVehicleCode(raw: string): string {
-  // la stessa regola degli indici unici di `vehicles` (migration 0000)
+  // la stessa regola degli indici unici di `vehicles` (tests/effective.dbtest.ts li confronta)
   return normalizePlate(raw).replace(/^0+(\d+)$/, "$1");
 }
 
@@ -108,9 +113,12 @@ export function resolveVehicleId(
   if (!vehicleRefRaw) return null;
   const code = normalizeVehicleCode(vehicleRefRaw);
   if (!code) return null;
-  const byCode = vehicles.filter(
-    (v) => normalizeVehicleCode(v.fuelVehicleCode ?? v.internalCode) === code,
-  );
+  // una matricola del distributore vuota (o di soli spazi) non è una matricola
+  const ownCode = (v: VehicleForMatch) =>
+    v.fuelVehicleCode && normalizeVehicleCode(v.fuelVehicleCode)
+      ? v.fuelVehicleCode
+      : v.internalCode;
+  const byCode = vehicles.filter((v) => normalizeVehicleCode(ownCode(v)) === code);
   if (byCode.length === 1) return byCode[0]!.id;
   if (byCode.length > 1) return null;
   const byPlate = vehicles.filter((v) => normalizePlate(v.plate) === normalizePlate(vehicleRefRaw));
@@ -175,6 +183,101 @@ function describe(c: Comparison): string {
   return parts.join(", ");
 }
 
+interface Candidate {
+  line: InvoiceLineForMatch;
+  log: FuelLogForMatch;
+  c: Comparison;
+}
+
+/** dalla coppia più vicina; a parità decidono gli id, così l'ordine dell'input non conta */
+function byCloseness(a: Candidate, b: Candidate): number {
+  return (
+    byDistance(a.c.distance, b.c.distance) ||
+    a.line.id.localeCompare(b.line.id) ||
+    a.log.id.localeCompare(b.log.id)
+  );
+}
+
+/** Distanza come intero, in ordine lessicografico: giorni, poi centesimi di litro, poi centesimi di euro. */
+function cost(c: Comparison): number {
+  const [days, liters, amount] = c.distance;
+  return days * 1_000_000 + Math.round(liters * 100) * 1_000 + Math.round(amount * 100);
+}
+
+/**
+ * Le coppie da tenere fra quelle candidate: massimo numero e, a parità,
+ * costo totale minimo. Matrice quadrata righe × rifornimenti in cui una
+ * coppia non candidata (e il riempimento) costa NONE, più di qualunque
+ * somma di coppie vere: così l'ottimo usa prima tutte le coppie possibili.
+ * Righe e rifornimenti in ordine di id: il risultato non dipende
+ * dall'ordine dell'input.
+ */
+function optimalAssignment(candidates: Candidate[]): Candidate[] {
+  const lineIds = [...new Set(candidates.map((x) => x.line.id))].sort();
+  const logIds = [...new Set(candidates.map((x) => x.log.id))].sort();
+  const n = Math.max(lineIds.length, logIds.length);
+  const NONE = 1e12;
+  const pair = new Map(candidates.map((x) => [`${x.line.id}|${x.log.id}`, x]));
+  const a = (i: number, j: number): number => {
+    const x =
+      i < lineIds.length && j < logIds.length ? pair.get(`${lineIds[i]}|${logIds[j]}`) : undefined;
+    return x ? cost(x.c) : NONE;
+  };
+
+  // Kuhn–Munkres con potenziali (indici da 1, colonna 0 di servizio)
+  const u = new Array<number>(n + 1).fill(0);
+  const v = new Array<number>(n + 1).fill(0);
+  const p = new Array<number>(n + 1).fill(0); // p[j] = riga assegnata alla colonna j
+  const way = new Array<number>(n + 1).fill(0);
+  for (let i = 1; i <= n; i++) {
+    p[0] = i;
+    let j0 = 0;
+    const minv = new Array<number>(n + 1).fill(Infinity);
+    const used = new Array<boolean>(n + 1).fill(false);
+    do {
+      used[j0] = true;
+      const i0 = p[j0]!;
+      let delta = Infinity;
+      let j1 = 0;
+      for (let j = 1; j <= n; j++) {
+        if (used[j]) continue;
+        const cur = a(i0 - 1, j - 1) - u[i0]! - v[j]!;
+        if (cur < minv[j]!) {
+          minv[j] = cur;
+          way[j] = j0;
+        }
+        if (minv[j]! < delta) {
+          delta = minv[j]!;
+          j1 = j;
+        }
+      }
+      for (let j = 0; j <= n; j++) {
+        if (used[j]) {
+          u[p[j]!] = u[p[j]!]! + delta;
+          v[j] = v[j]! - delta;
+        } else {
+          minv[j] = minv[j]! - delta;
+        }
+      }
+      j0 = j1;
+    } while (p[j0] !== 0);
+    do {
+      const j1 = way[j0]!;
+      p[j0] = p[j1]!;
+      j0 = j1;
+    } while (j0 !== 0);
+  }
+
+  const out: Candidate[] = [];
+  for (let j = 1; j <= n; j++) {
+    const i = p[j]!;
+    if (i === 0 || i > lineIds.length || j > logIds.length) continue;
+    const x = pair.get(`${lineIds[i - 1]}|${logIds[j - 1]}`);
+    if (x) out.push(x);
+  }
+  return out;
+}
+
 export function reconcileFuel(
   lines: ReadonlyArray<InvoiceLineForMatch>,
   logs: ReadonlyArray<FuelLogForMatch>,
@@ -183,13 +286,7 @@ export function reconcileFuel(
   const result = new Map<string, LineMatch>();
   const usedLogs = new Set<string>();
 
-  const assign = (
-    line: InvoiceLineForMatch,
-    log: FuelLogForMatch,
-    c: Comparison,
-    status: LineMatchStatus,
-    reason: string,
-  ) => {
+  const assign = ({ line, log, c }: Candidate, status: LineMatchStatus, reason: string) => {
     usedLogs.add(log.id);
     result.set(line.id, {
       lineId: line.id,
@@ -200,102 +297,80 @@ export function reconcileFuel(
       reason,
     });
   };
-
-  const sameDayish = (line: InvoiceLineForMatch, log: FuelLogForMatch) =>
+  const free = (x: Candidate) => !result.has(x.line.id) && !usedLogs.has(x.log.id);
+  const nearDate = (line: InvoiceLineForMatch, log: FuelLogForMatch) =>
     Math.abs(daysBetween(log.refueledOn, line.refueledOn)) <= tol.days;
 
-  // 1. numero di buono: stesso buono, stesso prodotto, data vicina (i buoni
-  //    si ripetono fra giorni e pompe). Fra più candidati vince il più vicino.
+  // tutte le coppie possibili, una volta sola
+  const byReceipt: Candidate[] = [];
+  const byVehicle: Candidate[] = [];
   for (const line of lines) {
     const receipt = normalizeReceipt(line.receiptNumber);
-    if (!receipt) continue;
-    const best = logs
-      .filter(
-        (l) =>
-          !usedLogs.has(l.id) &&
-          normalizeReceipt(l.receiptNumber) === receipt &&
-          l.product === line.product &&
-          sameDayish(line, l) &&
-          (line.vehicleId === null || l.vehicleId === line.vehicleId),
-      )
-      .map((log) => ({ log, c: compare(line, log, tol) }))
-      .sort((a, b) => byDistance(a.c.distance, b.c.distance))[0];
-    if (!best) continue;
-    const { log, c } = best;
-    if (c.withinTolerance) assign(line, log, c, "matched", "stesso buono");
-    else if (c.litersDiff === null && c.amountDiff === null)
-      assign(line, log, c, "matched", "stesso buono (litri e importo non confrontabili)");
-    else assign(line, log, c, "mismatch", `stesso buono, numeri diversi: ${describe(c)}`);
+    for (const log of logs) {
+      if (log.product !== line.product || !nearDate(line, log)) continue;
+      const sameVehicle = line.vehicleId !== null && log.vehicleId === line.vehicleId;
+      const sameReceipt =
+        receipt !== null &&
+        normalizeReceipt(log.receiptNumber) === receipt &&
+        (line.vehicleId === null || sameVehicle);
+      if (!sameReceipt && !sameVehicle) continue;
+      const candidate = { line, log, c: compare(line, log, tol) };
+      if (sameReceipt) byReceipt.push(candidate);
+      if (sameVehicle) byVehicle.push(candidate);
+    }
+  }
+  byReceipt.sort(byCloseness);
+  byVehicle.sort(byCloseness);
+
+  const notComparable = (x: Candidate) => x.c.litersDiff === null && x.c.amountDiff === null;
+
+  // 1. stesso buono, numeri che tornano (o che non si possono confrontare)
+  for (const x of byReceipt) {
+    if (!free(x)) continue;
+    if (x.c.withinTolerance) assign(x, "matched", "stesso buono");
+    else if (notComparable(x))
+      assign(x, "matched", "stesso buono (litri e importo non confrontabili)");
   }
 
-  // candidati per mezzo + prodotto + data, ordinati dal più vicino
-  const candidates = (withinTolerance: boolean) => {
-    const out = new Map<string, { log: FuelLogForMatch; c: Comparison }[]>();
-    for (const line of lines) {
-      if (result.has(line.id) || line.vehicleId === null) continue;
-      const list = logs
-        .filter(
-          (log) =>
-            !usedLogs.has(log.id) &&
-            log.vehicleId === line.vehicleId &&
-            log.product === line.product &&
-            sameDayish(line, log),
-        )
-        .map((log) => ({ log, c: compare(line, log, tol) }))
-        .filter((x) => x.c.withinTolerance === withinTolerance)
-        .sort((a, b) => byDistance(a.c.distance, b.c.distance));
-      if (list.length) out.set(line.id, list);
+  // 2. stesso mezzo entro tolleranza: assegnazione OTTIMA per mezzo e
+  //    prodotto — il massimo numero di coppie e, a parità, la distanza
+  //    complessiva minima (algoritmo ungherese). Ogni scelta greedy ha un
+  //    controesempio: con le date del distributore spostate di un giorno e
+  //    pieni simili in giorni consecutivi, una riga ruba il rifornimento
+  //    all'altra e restano orfani; il rimedio greedy sposta invece una riga
+  //    esatta su un pieno peggiore. I gruppi sono piccoli (una ventina di
+  //    pieni al mese per mezzo): O(n³) non costa niente.
+  const groups = new Map<string, Candidate[]>();
+  for (const x of byVehicle) {
+    if (!x.c.withinTolerance || !free(x)) continue;
+    const key = `${x.line.vehicleId}|${x.line.product}`;
+    const list = groups.get(key) ?? [];
+    list.push(x);
+    groups.set(key, list);
+  }
+  for (const key of [...groups.keys()].sort()) {
+    for (const x of optimalAssignment(groups.get(key)!)) {
+      assign(x, "matched", "stesso mezzo, data e quantità");
     }
-    return out;
-  };
-
-  // 2. abbinamento entro tolleranza: il massimo numero di coppie, preferendo
-  //    le più vicine. Un greedy «prima la coppia più vicina» sbaglia quando il
-  //    distributore sposta le date di un giorno e il mezzo fa pieni simili in
-  //    giorni consecutivi: una riga ruba il rifornimento all'altra e restano
-  //    una riga e un rifornimento orfani. Qui una riga già abbinata cede il
-  //    suo rifornimento se ne ha un altro (cammino aumentante).
-  const within = candidates(true);
-  const lineById = new Map(lines.map((l) => [l.id, l]));
-  const owner = new Map<string, string>(); // rifornimento → riga
-  const tryAssign = (lineId: string, seen: Set<string>): boolean => {
-    for (const { log } of within.get(lineId) ?? []) {
-      if (seen.has(log.id)) continue;
-      seen.add(log.id);
-      const holder = owner.get(log.id);
-      if (holder === undefined || tryAssign(holder, seen)) {
-        owner.set(log.id, lineId);
-        return true;
-      }
-    }
-    return false;
-  };
-  const order = [...within.entries()].sort((a, b) =>
-    byDistance(a[1][0]!.c.distance, b[1][0]!.c.distance),
-  );
-  for (const [lineId] of order) tryAssign(lineId, new Set());
-  for (const [logId, lineId] of owner) {
-    const found = within.get(lineId)!.find((x) => x.log.id === logId)!;
-    assign(lineById.get(lineId)!, found.log, found.c, "matched", "stesso mezzo, data e quantità");
   }
 
-  // 3. sullo stesso mezzo e prodotto, data vicina, ma numeri che non tornano:
-  //    il candidato più vicino, da guardare a mano
-  const pairs = [...candidates(false).entries()]
-    .flatMap(([lineId, list]) => list.map((x) => ({ line: lineById.get(lineId)!, ...x })))
-    .sort((a, b) => byDistance(a.c.distance, b.c.distance));
-  for (const { line, log, c } of pairs) {
-    if (result.has(line.id) || usedLogs.has(log.id)) continue;
+  // 3. stesso buono, numeri diversi
+  for (const x of byReceipt) {
+    if (!free(x)) continue;
+    assign(x, "mismatch", `stesso buono, numeri diversi: ${describe(x.c)}`);
+  }
+
+  // 4. stesso mezzo e data, numeri diversi: il candidato più vicino
+  for (const x of byVehicle) {
+    if (!free(x)) continue;
     assign(
-      line,
-      log,
-      c,
+      x,
       "mismatch",
-      `stesso mezzo e data, numeri diversi: ${describe(c) || "importo non registrato"}`,
+      `stesso mezzo e data, numeri diversi: ${describe(x.c) || "importo non registrato"}`,
     );
   }
 
-  // 4. quello che resta
+  // quello che resta
   const lineMatches = lines.map(
     (line): LineMatch =>
       result.get(line.id) ?? {

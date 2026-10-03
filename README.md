@@ -24,7 +24,8 @@ packages/db                     @fleetcare/db
   migrations/0001_rls_and_functions.sql   ruolo app, RLS, audit, regole del database, vista
                                 delle scadenze effettive, login, numerazione
   tests/                        Vitest (dominio + catalogo), rls.test.sql (permessi),
-                                rules.test.sql (regole del database)
+                                rules.test.sql (regole del database), effective.dbtest.ts
+                                (parità fra database e TypeScript)
 docs/analisi-campi.md           l'analisi
 ```
 
@@ -57,6 +58,8 @@ pnpm test          # Vitest: scadenze, abbinamento carburante, coerenza del cata
 # su un DB migrato, con il ruolo applicativo vero; chiudono con ROLLBACK:
 psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/rls.test.sql    # permessi
 psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/rules.test.sql  # regole
+pnpm test:db       # la vista delle scadenze, la prossima scadenza e i codici dei mezzi
+                   # calcolati dal database coincidono con il TypeScript
 ```
 
 La CI esegue tutto questo su un Postgres vero, più due controlli: lo schema non

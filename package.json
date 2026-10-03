@@ -12,6 +12,7 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:db": "pnpm --filter @fleetcare/db test:db",
     "db:generate": "pnpm --filter @fleetcare/db db:generate",
     "db:migrate": "pnpm --filter @fleetcare/db db:migrate",
     "db:seed": "pnpm --filter @fleetcare/db db:seed"

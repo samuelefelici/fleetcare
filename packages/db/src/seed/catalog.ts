@@ -46,6 +46,7 @@ export interface DeadlineTypeSeed {
   intervalKm?: number;
   monthEnd?: boolean;
   renewFromDue?: boolean;
+  renewGraceDays?: number;
   isVehicleTax?: boolean;
   completedByCrew?: boolean;
   alertDays: number;
@@ -76,9 +77,10 @@ export const DEADLINE_TYPES: DeadlineTypeSeed[] = [
     subject: "vehicle",
     reference: "CdS art. 193",
     description:
-      "Con una polizza a libro matricola la scadenza è la stessa per tutti i mezzi: il rinnovo si registra su ciascuno, con la sua quota di premio. Si rinnova dall'anniversario, non dal giorno del pagamento.",
+      "Con una polizza a libro matricola la scadenza è la stessa per tutti i mezzi: il rinnovo si registra su ciascuno, con la sua quota di premio. Si rinnova dall'anniversario, non dal giorno del pagamento, se pagata entro 15 giorni dalla scadenza (art. 1901 c.c.); oltre, il nuovo periodo parte dal pagamento.",
     intervalMonths: 12,
     renewFromDue: true,
+    renewGraceDays: 15,
     alertDays: 30,
     blocking: true,
     documentRequired: true,
@@ -88,7 +90,8 @@ export const DEADLINE_TYPES: DeadlineTypeSeed[] = [
     label: "Tassa automobilistica",
     subject: "vehicle",
     reference: "Tassa regionale; molti mezzi sanitari e per disabili di ETS sono esenti",
-    description: "Non nasce per i mezzi con «esente bollo». Si rinnova dalla scadenza precedente.",
+    description:
+      "Non nasce per i mezzi con «esente bollo». Calendario fisso: si rinnova dalla scadenza precedente anche se pagato in ritardo.",
     intervalMonths: 12,
     monthEnd: true,
     renewFromDue: true,

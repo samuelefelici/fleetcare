@@ -21,7 +21,8 @@ export const faultReports = fleetcareSchema.table(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
-    number: text("number").notNull(), // SGN-YYYY-NNNNN
+    /** SGN-AAAA-NNNNN: lo assegna il database all'inserimento, il valore del client si ignora */
+    number: text("number").notNull().default(""),
     vehicleId: uuid("vehicle_id").notNull(),
     /** se il guasto è di un'attrezzatura: quale (l'aspiratore non aspira, il DAE non supera l'autotest) */
     equipmentId: uuid("equipment_id"),

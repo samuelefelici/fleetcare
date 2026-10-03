@@ -1,7 +1,8 @@
 name: CI
 
-# Su ogni PR: lint + typecheck + test, poi le migration e i test RLS su un
-# Postgres vero. Il deploy NON lo fa Actions: lo fa Coolify al push su main.
+# Su ogni PR: lint + typecheck + test, poi le migration e i test su un
+# Postgres vero (permessi, regole, parità con il TypeScript). Il deploy NON
+# lo fa Actions: lo fa Coolify al push su main.
 on:
   pull_request:
   push:
@@ -62,6 +63,10 @@ jobs:
 
       - name: Test delle regole del database
         run: psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/rules.test.sql
+
+      # le regole scritte due volte (vista SQL e TypeScript) devono coincidere
+      - name: Parità database / TypeScript
+        run: pnpm test:db
 
       # un secondo seed non deve far risorgere ciò che l'associazione ha eliminato
       - name: Seed rilanciato dopo una cancellazione

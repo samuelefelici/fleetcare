@@ -38,7 +38,8 @@ export const maintenanceJobs = fleetcareSchema.table(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
-    number: text("number").notNull(), // MAN-YYYY-NNNNN
+    /** MAN-AAAA-NNNNN: lo assegna il database all'inserimento, il valore del client si ignora */
+    number: text("number").notNull().default(""),
     /** il mezzo; può mancare solo per l'assistenza su un'attrezzatura spedita da sola */
     vehicleId: uuid("vehicle_id"),
     equipmentId: uuid("equipment_id"),

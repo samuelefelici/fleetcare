@@ -56,23 +56,10 @@ export async function withTenant<T>(
   });
 }
 
-export type DocumentKind = "SGN" | "MAN" | "SIN";
-
-/**
- * Prossimo numero documento (SGN-2026-00001, MAN-…, SIN-…), atomico per
- * associazione e anno. Passa dalla funzione del database: i contatori non
- * sono scrivibili dall'app, così nessuno può azzerarli. Le segnalazioni le
- * numera chiunque; interventi e sinistri solo i responsabili.
+/*
+ * Numerazione dei documenti (SGN-2026-00001, MAN-…, SIN-…): non passa
+ * dall'app. La assegna il database all'inserimento di segnalazioni,
+ * interventi e sinistri (trigger `assign_document_number`, migration 0001):
+ * il numero mandato dal client si ignora, così nessuno può occupare i
+ * numeri futuri o azzerare un contatore.
  */
-export async function nextDocumentNumber(
-  tx: TenantTx,
-  kind: DocumentKind,
-  year: number,
-): Promise<string> {
-  const rows = await tx.execute<{ number: string }>(
-    sql`select fleetcare.next_document_number(${kind}, ${year}) as number`,
-  );
-  const number = rows[0]?.number;
-  if (!number) throw new Error(`Numerazione ${kind} non riuscita`);
-  return number;
-}

@@ -9,9 +9,10 @@
     "./domain/*": "./src/domain/*.ts"
   },
   "scripts": {
-    "lint": "prettier --check src tests drizzle.config.ts",
+    "lint": "prettier --check src tests drizzle.config.ts vitest.db.config.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:db": "vitest run --config vitest.db.config.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/migrate.ts",
     "db:seed": "tsx src/seed/run.ts"
