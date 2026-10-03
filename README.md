@@ -15,7 +15,7 @@ catalogo iniziale. L'app (`apps/web`) è il passo successivo.
 
 ```
 packages/db                     @fleetcare/db
-  src/schema/                   schema Drizzle: fonte unica dei tipi (33 tabelle)
+  src/schema/                   schema Drizzle: fonte unica dei tipi (35 tabelle)
   src/domain/deadlines.ts       motore delle scadenze (prossima scadenza, stato, semaforo)
   src/domain/fuel-reconciliation.ts   abbinamento fattura del distributore ↔ rifornimenti
   src/domain/labels.ts          etichette italiane degli enum

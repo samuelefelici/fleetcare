@@ -13,7 +13,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { fleetcareSchema } from "./_schema";
 import { profiles, suppliers, tenants } from "./core";
-import { completionOutcome, deadlineSubject, vehicleCategory } from "./enums";
+import { completionOutcome, deadlineSubject, ownershipKind, vehicleCategory } from "./enums";
 import { equipment, equipmentTypes } from "./equipment";
 import { maintenanceJobs } from "./maintenance";
 import { vehicles } from "./vehicles";
@@ -35,6 +35,12 @@ import { vehicles } from "./vehicles";
  *   deadlines             la scadenza corrente di UN mezzo o UNA attrezzatura
  *   deadline_completions  lo storico: ogni volta che è stata fatta, da chi,
  *                         con che esito, quanto è costata, il certificato
+ *
+ * TUTTO È DELL'ASSOCIAZIONE. Il seed precarica un catalogo con le norme
+ * italiane, ma tipi, regole e scadenze si scelgono, si aggiungono, si
+ * modificano e si eliminano dall'applicazione. L'unico limite è lo
+ * storico: ciò che ha adempimenti registrati si archivia invece di
+ * sparire (`remove_deadline`, `remove_deadline_type`).
  */
 
 /** Catalogo dei tipi di scadenza, per tenant, precaricato dal seed con le norme italiane. */
@@ -71,7 +77,8 @@ export const deadlineTypes = fleetcareSchema.table(
     blocking: boolean("blocking").notNull().default(false),
     /** per chiuderla serve allegare un documento (certificato, ricevuta) */
     documentRequired: boolean("document_required").notNull().default(false),
-    active: boolean("active").notNull().default(true),
+    /** eliminato dall'associazione ma con storico da conservare (vedi `remove_deadline_type`) */
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     sortOrder: integer("sort_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -113,6 +120,14 @@ export const deadlineRules = fleetcareSchema.table(
     intervalKm: integer("interval_km"),
     alertDays: integer("alert_days"),
     blocking: boolean("blocking"),
+    /**
+     * Solo per attrezzature: la regola vale per questi tipi di proprietà
+     * (null = tutte). È la risposta a «di chi è la bombola»: con
+     * `{owned}` il collaudo nasce solo per le bombole dell'associazione, non
+     * per quelle a scambio del fornitore né per il DAE in comodato dall'AST.
+     * Ogni associazione decide la sua.
+     */
+    ownershipKinds: ownershipKind("ownership_kinds").array(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -129,6 +144,10 @@ export const deadlineRules = fleetcareSchema.table(
     check(
       "deadline_rules_interval_ck",
       sql`not (${t.intervalMonths} is not null and ${t.intervalDays} is not null)`,
+    ),
+    check(
+      "deadline_rules_ownership_ck",
+      sql`${t.ownershipKinds} is null or ${t.equipmentTypeId} is not null`,
     ),
   ],
 );
@@ -168,8 +187,13 @@ export const deadlines = fleetcareSchema.table(
     /** ultimo adempimento (copia dell'ultima `deadline_completions`, per leggere senza join) */
     lastDoneOn: date("last_done_on"),
     lastDoneKm: integer("last_done_km"),
-    /** false quando non si applica più (attrezzatura dismessa, bombola restituita al fornitore) */
-    active: boolean("active").notNull().default(true),
+    /**
+     * Eliminata ma con storico: una scadenza che ha adempimenti registrati
+     * non si cancella (le revisioni passate sono documentazione), si
+     * archivia. Sparisce da scadenzario e semaforo e si può ripristinare.
+     * Vedi `remove_deadline` nella migration 0001.
+     */
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     notes: text("notes"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -213,9 +237,10 @@ export const deadlineCompletions = fleetcareSchema.table(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    /* nessun cascade: cancellare una scadenza non deve portarsi via lo storico */
     deadlineId: uuid("deadline_id")
       .notNull()
-      .references(() => deadlines.id, { onDelete: "cascade" }),
+      .references(() => deadlines.id),
     doneOn: date("done_on").notNull(),
     doneKm: integer("done_km"),
     outcome: completionOutcome("outcome").notNull().default("passed"),

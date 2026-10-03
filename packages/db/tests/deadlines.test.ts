@@ -3,8 +3,10 @@ import {
   addMonths,
   evaluateDeadline,
   nextDue,
+  planDeadlines,
   resolveRule,
   semaphore,
+  type PlannableRule,
 } from "../src/domain/deadlines";
 
 describe("addMonths", () => {
@@ -149,5 +151,84 @@ describe("resolveRule", () => {
 
   it("la regola può rendere bloccante una scadenza che di tipo non lo è", () => {
     expect(resolveRule({ ...revisione, blocking: false }, { blocking: true }).blocking).toBe(true);
+  });
+});
+
+describe("planDeadlines", () => {
+  const type = (over: Partial<PlannableRule["type"]> = {}): PlannableRule["type"] => ({
+    intervalMonths: 12,
+    intervalDays: null,
+    intervalKm: null,
+    alertDays: 30,
+    alertKm: null,
+    blocking: false,
+    archived: false,
+    ...over,
+  });
+  const rule = (over: Partial<PlannableRule>): PlannableRule => ({
+    deadlineTypeId: "t",
+    deadlineTypeCode: "t",
+    vehicleCategory: null,
+    equipmentTypeId: null,
+    ownershipKinds: null,
+    type: type(),
+    ...over,
+  });
+
+  const vehicleRules = [
+    rule({
+      deadlineTypeId: "rev",
+      deadlineTypeCode: "revisione",
+      vehicleCategory: "emergency_ambulance",
+    }),
+    rule({
+      deadlineTypeId: "bol",
+      deadlineTypeCode: "bollo",
+      vehicleCategory: "emergency_ambulance",
+    }),
+    rule({
+      deadlineTypeId: "rev",
+      deadlineTypeCode: "revisione",
+      vehicleCategory: "medical_car",
+      intervalMonths: 24,
+    }),
+  ];
+
+  it("prende le regole della categoria, con i valori risolti", () => {
+    const out = planDeadlines(
+      { kind: "vehicle", category: "medical_car", bolloExempt: false },
+      vehicleRules,
+    );
+    expect(out).toEqual([expect.objectContaining({ deadlineTypeId: "rev", intervalMonths: 24 })]);
+  });
+
+  it("un mezzo esente non riceve il bollo", () => {
+    const ids = (bolloExempt: boolean) =>
+      planDeadlines(
+        { kind: "vehicle", category: "emergency_ambulance", bolloExempt },
+        vehicleRules,
+      ).map((d) => d.deadlineTypeId);
+    expect(ids(false)).toEqual(["rev", "bol"]);
+    expect(ids(true)).toEqual(["rev"]);
+  });
+
+  it("la proprietà decide: il collaudo nasce solo per le bombole dell'associazione", () => {
+    const rules = [
+      rule({ deadlineTypeId: "col", equipmentTypeId: "o2", ownershipKinds: ["owned"] }),
+      rule({ deadlineTypeId: "gas", equipmentTypeId: "o2" }),
+    ];
+    const ids = (ownership: string) =>
+      planDeadlines({ kind: "equipment", equipmentTypeId: "o2", ownership }, rules).map(
+        (d) => d.deadlineTypeId,
+      );
+    expect(ids("owned")).toEqual(["col", "gas"]);
+    expect(ids("rented")).toEqual(["gas"]);
+  });
+
+  it("un tipo eliminato (archiviato) non genera più scadenze", () => {
+    const rules = [rule({ equipmentTypeId: "dae", type: type({ archived: true }) })];
+    expect(
+      planDeadlines({ kind: "equipment", equipmentTypeId: "dae", ownership: "owned" }, rules),
+    ).toEqual([]);
   });
 });

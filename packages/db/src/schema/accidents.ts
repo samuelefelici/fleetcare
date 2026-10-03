@@ -1,6 +1,6 @@
 import { boolean, index, numeric, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { fleetcareSchema } from "./_schema";
-import { crewMembers, profiles, suppliers, tenants } from "./core";
+import { profiles, suppliers, tenants } from "./core";
 import { accidentFault, accidentStatus } from "./enums";
 import { vehicles } from "./vehicles";
 
@@ -27,7 +27,7 @@ export const accidents = fleetcareSchema.table(
     location: text("location"),
     description: text("description").notNull(),
     /** chi guidava */
-    driverId: uuid("driver_id").references(() => crewMembers.id),
+    driverId: uuid("driver_id").references(() => profiles.id),
     /** in servizio di emergenza con dispositivi supplementari attivi (art. 177 CdS) */
     duringEmergency: boolean("during_emergency").notNull().default(false),
     fault: accidentFault("fault").notNull().default("unknown"),

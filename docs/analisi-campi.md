@@ -64,21 +64,36 @@ Da qui tre decisioni strutturali:
 | — | `supply_items`, `supply_lots`, `kit_requirements` | **Nuovo**: materiale di consumo con scadenza e dotazione minima per mezzo. |
 | — (prevista nella specifica TPL, mai fatta) | `checklist_templates`, `checklist_template_items`, `checklists`, `checklist_answers` | Qui è centrale: è il controllo a inizio turno. |
 | — | `sanitizations` | **Nuovo**: registro delle sanificazioni. |
-| — | `crew_members` | **Nuovo**: chi fa le cose, anche senza utenza (§3). |
+| `profiles` (email e password insieme al nome) | `profiles` (rubrica) + `profile_accounts` (recapiti e credenziali) + `push_subscriptions` | I volontari segnalano dai **propri dispositivi**: ognuno ha un'utenza, e la rubrica che tutti leggono non deve contenere email, telefoni e password degli altri (§3). |
+| `report_comments` | `fault_report_comments` | Il filo fra responsabile e volontario, con note interne invisibili all'equipaggio. |
 | `legacy_suppliers` (solo nome e telefono) | `suppliers`, unica | Ogni costo deve poter dire «pagato a chi», e lo stesso soggetto fa più cose. |
 
 ---
 
 ## 3. Persone
 
-| Tabella | Campi chiave | Note |
-|---|---|---|
-| `profiles` | email, nome, ruolo, hash password | Le utenze dell'app (Auth.js). |
-| `crew_members` | nome, n. tessera, `is_driver`, `profile_id` facoltativo | Molti volontari non avranno mai un'utenza: la check-list si compila sul tablet di sede scegliendo il proprio nome. Quando un volontario ha anche l'utenza, `profile_id` li lega. **Dati minimi per scelta (GDPR)**: patenti, abilitazioni e turni non sono materia del parco mezzi. |
+I volontari segnalano guasti (e compilano check-list, registrano
+rifornimenti e sanificazioni) da un'**app dedicata sui propri
+dispositivi**. Quindi ogni volontario ha un'utenza, e lo schema ne tiene
+conto in tre modi.
 
-Ogni registro dell'equipaggio (check-list, rifornimenti, sanificazioni,
-segnalazioni, letture km) porta sia `crew_member_id` (chi l'ha fatto) sia
-l'utenza che l'ha registrato, quando c'è.
+| Tabella | Campi chiave | Perché così |
+|---|---|---|
+| `profiles` | nome, ruolo, n. tessera, `is_driver`, sede | È la **rubrica** dell'associazione: la leggono tutti (serve a scrivere «segnalato da…»), quindi contiene solo ciò che è giusto che un volontario veda degli altri. Dati minimi per scelta (GDPR): patenti, abilitazioni e turni non sono materia del parco mezzi. |
+| `profile_accounts` | email (unica per associazione, senza distinguere maiuscole), telefono, hash password, ultimo accesso | **Recapiti e credenziali**, separati dalla rubrica: ognuno vede solo i propri, la direzione tutti. Non finiscono nell'audit, che altrimenti conserverebbe gli hash delle password. Una persona senza riga qui esiste ma non ha ancora attivato l'app. |
+| `push_subscriptions` | dispositivo (endpoint e chiavi Web Push) | Così chi ha segnalato riceve «presa in carico», «risolta» sul proprio telefono. Più dispositivi per persona. |
+
+Ogni registro dell'equipaggio ha **una sola** colonna «chi»
+(`reported_by_id`, `recorded_by_id`, `performed_by_id`, `uploaded_by_id`),
+obbligatoria e verso `profiles`. La RLS impedisce a un volontario di
+registrare **a nome di un altro**: con i dispositivi personali, senza questo
+vincolo chiunque potrebbe firmare la check-list di un collega. I
+responsabili invece possono registrare per conto di qualcuno (il buono di
+carta portato in sede da chi non ha usato l'app).
+
+Per l'app offline (segnale scarso in deposito) non serve un campo apposta:
+gli id sono UUID, li genera il dispositivo, e un invio ripetuto dopo un
+errore di rete non duplica la riga.
 
 ---
 
@@ -95,7 +110,7 @@ omologazione. I campi di `vehicles` sono raggruppati così.
 | Allestimento | allestitore, data, n. omologazione, classe **UNI EN 1789** (A1/A2/B/C), `has_lift`, `has_priority_lights` (art. 177 CdS) | Il sollevatore vero è un'attrezzatura con le sue scadenze; qui c'è solo il fatto che il mezzo ce l'ha. |
 | Immatricolazione | data prima immatricolazione, n. carta di circolazione | La prima revisione delle autovetture dipende da questa data. |
 | Proprietà e provenienza | `ownership` (proprietà/comodato/leasing/noleggio), intestatario, acquisto e valore, **`funding_source`** (fondi propri, 5×1000, donazione, bando), **`donor_name`**, vita utile, **`bollo_exempt`** | Chi finanzia un mezzo di solito chiede di rendicontare: senza `funding_source` la domanda «cosa abbiamo comprato col 5×1000» non ha risposta. Molti mezzi sanitari di ETS sono esenti dal bollo: se è vero, la scadenza non nasce. |
-| Esercizio | `odometer_km` (aggiornato dal trigger), `fuel_card_code` | Il codice tessera serve a riconoscere il mezzo nelle righe di fattura quando il distributore non scrive la targa. |
+| Esercizio | `odometer_km` (ricalcolato dal trigger sull'ultima lettura), `fuel_vehicle_code` | Il distributore identifica il mezzo dalla **matricola**. Se la sua matricola coincide con il numero interno il campo resta vuoto; se il distributore ne usa una sua, si scrive qui. |
 | Fine vita | data e motivo di dismissione | |
 
 Collegate al mezzo: `odometer_readings` (ogni lettura, da qualunque
@@ -152,7 +167,7 @@ alla pompa                       a fine mese
 ──────────                       ───────────
 fuel_logs                        fuel_invoices  (testata: n., data, periodo, totali, SdI)
  mezzo, data/ora, km,              └─ fuel_invoice_lines  (il riepilogo, riga per riga:
- litri, importo, n. buono,             data, targa com'è scritta, litri, importo, n. buono)
+ litri, importo, n. buono,             data, matricola com'è scritta, litri, importo, n. buono)
  pieno sì/no, chi
             \                      /
              └── abbinamento ─────┘   domain/fuel-reconciliation.ts
@@ -170,10 +185,17 @@ Campi che contano e perché:
 | `fuel_logs.receipt_number` | La prova più forte per l'abbinamento. Si confronta insieme alla data, perché i numeri dei buoni si ripetono. |
 | `fuel_logs.full_tank` | Il consumo (km/l) si calcola solo fra due pieni: un rabbocco da 20 € non dice quanto ha bevuto il mezzo. |
 | `fuel_logs.unit_price_eur` | Calcolato dal database da importo/litri: mai scritto a mano, resta coerente. |
-| `fuel_invoice_lines.plate_raw` accanto a `vehicle_id` | Se il riconoscimento sbaglia, il dato d'origine c'è ancora. |
+| `fuel_invoice_lines.vehicle_ref_raw` accanto a `vehicle_id` | La matricola com'è scritta dal distributore: se il riconoscimento sbaglia, il dato d'origine c'è ancora. |
 | `fuel_invoice_lines.fuel_log_id` (unico) | Un rifornimento si abbina a una riga sola: niente doppio pagamento. |
 | `fuel_invoices.lines_include_vat` + `vat_rate_pct` | Lo scontrino alla pompa è IVA inclusa; se il riepilogo è imponibile va riportato al lordo prima del confronto. |
 | `fuel_invoices.status` | `received → reconciled → approved → paid` (+ `disputed`): si paga solo una fattura con tutte le righe spiegate. |
+
+**Riconoscere il mezzo dalla matricola** (`resolveVehicleId`). Prova, in
+ordine: la matricola del distributore registrata sul mezzo
+(`fuel_vehicle_code`), il numero interno, la targa. Le matricole numeriche
+si confrontano senza zeri iniziali («005» e «5» sono lo stesso mezzo). Se a
+un livello i mezzi possibili sono più di uno, non indovina: la riga resta
+da abbinare a mano.
 
 Tolleranze di default: ±1 giorno, ±0,5 litri, ±0,50 €. A parità di
 candidati vince la coppia più vicina in assoluto, non la prima trovata: con
@@ -204,7 +226,37 @@ Regole del motore (`domain/deadlines.ts`, logica pura e testata):
   **giallo** se qualcosa è in preavviso, superato ma non bloccante, o senza
   data; **verde** altrimenti.
 
-### 7.2 Il catalogo iniziale
+### 7.2 Ogni associazione gestisce i propri scadenzari
+
+Il catalogo del seed è un punto di partenza, non un vincolo. Dall'app
+l'associazione **sceglie, aggiunge, modifica ed elimina** tipi di
+scadenza, regole e singole scadenze. Le regole dello schema:
+
+- **scegliere**: una regola si cancella (le bombole sono a scambio? via il
+  collaudo) oppure si restringe per proprietà con `ownership_kinds`: con
+  `{owned}` il collaudo nasce solo per le bombole dell'associazione, non per
+  quelle del fornitore né per il DAE in comodato dall'AST. Chi fa la
+  manutenzione di cosa lo decide ogni associazione, una volta;
+- **aggiungere**: tipi propri (es. «Rinnovo comodato con il Comune»,
+  «Verifica sirena»), regole proprie, scadenze singole su un mezzo o
+  un'attrezzatura anche fuori da ogni regola;
+- **modificare**: periodicità, preavviso e blocco si correggono sul tipo,
+  sulla regola o sulla singola scadenza;
+- **eliminare senza perdere lo storico**: `remove_deadline` e
+  `remove_deadline_type` cancellano ciò che non ha adempimenti registrati e
+  **archiviano** ciò che li ha (una revisione fatta è documentazione). Dicono
+  sempre cosa è successo (`deleted` / `archived`); un'archiviata sparisce da
+  scadenzario e semaforo e si ripristina. Un `DELETE` a mano di una
+  scadenza con storico fallisce sul vincolo: lo storico non si perde per
+  errore.
+
+Le modifiche agli scadenzari passano dall'audit log. Quando nasce un mezzo
+o un'attrezzatura, `planDeadlines` decide quali scadenze creare: le regole
+della sua categoria o del suo tipo, filtrate per proprietà, senza i tipi
+archiviati, senza il bollo per i mezzi esenti. Le scadenze nascono «da
+completare»: la prima data la scrive chi ha il documento.
+
+### 7.3 Il catalogo iniziale
 
 Periodicità e riferimenti di partenza, **da validare** con il responsabile
 mezzi e il responsabile sanitario. Dove la norma lascia la periodicità al
@@ -257,10 +309,14 @@ straordinaria dopo paziente infettivo), chi, quando, prodotto e lotto,
 metodo, durata del fermo. Per la straordinaria si registra **solo il
 fatto**: nessun dato del paziente né della patologia.
 
-**Segnalazioni** (`fault_reports`, numerate `SGN-AAAA-NNNNN`): mezzo,
-attrezzatura se è lei a essere guasta, area, descrizione, gravità a tre
-livelli, flag «il mezzo non è sicuro», collegamento all'intervento che la
-risolve e alla risposta della check-list che l'ha generata.
+**Segnalazioni** (`fault_reports`, numerate `SGN-AAAA-NNNNN`), dall'app
+dei volontari: mezzo, attrezzatura se è lei a essere guasta, area,
+descrizione, gravità a tre livelli, flag «il mezzo non è sicuro», chi ha
+segnalato, collegamento all'intervento che la risolve e alla risposta della
+check-list che l'ha generata. Il filo dei messaggi
+(`fault_report_comments`) chiude il cerchio con chi ha segnalato («mi mandi
+una foto della spia?»); le note `internal` fra responsabili l'equipaggio
+non le vede. I commenti non si modificano.
 
 **Interventi** (`maintenance_jobs`, `MAN-AAAA-NNNNN`): mezzo e/o
 attrezzatura, fornitore (nullo = fatto in casa), tipo, stato, consegna e
@@ -289,15 +345,20 @@ ruolo applicativo vero.
 
 | Risorsa | crew | fleet_manager | equipment_manager | admin_finance | admin |
 |---|---|---|---|---|---|
-| Mezzi, sedi, volontari, fornitori, fermi, modelli di check-list | R | CRUD | R | R | CRUD |
+| Mezzi, sedi, fornitori, fermi, modelli di check-list | R | CRUD | R | R | CRUD |
 | Attrezzature, materiale, dotazione, tipi e regole di scadenza, scadenze | R | CRUD | CRUD | R | CRUD |
 | Adempimenti delle scadenze | R | CRUD | CRUD | CRUD | CRUD |
 | Interventi, sinistri (contengono costi) | — | CRUD | CRU | RU | CRUD |
-| Segnalazioni, rifornimenti, letture km, allegati | CR | CRUD | CRU | CRU | CRUD |
-| Check-list, sanificazioni (documentazione) | CR | CR | CR | CR | CRUD |
+| Segnalazioni, rifornimenti, letture km, allegati | CR¹ | CRUD | CRU | CRU | CRUD |
+| Check-list, sanificazioni (documentazione) | CR¹ | CR | CR | CR | CRUD |
+| Commenti alle segnalazioni | CR¹ (senza note interne) | CR² | CR² | CR² | CRD² |
 | Fatture carburante | — | R | — | CRUD | CRUD |
-| Utenze | R | R | R | R | CRUD |
+| Rubrica (`profiles`) | R | R | R | R | CRUD |
+| Recapiti e credenziali (`profile_accounts`) | RU propri | RU propri | RU propri | RU propri | CRUD |
+| Dispositivi push | CRUD propri | R tutti, CRUD propri | come fleet_manager | come fleet_manager | come fleet_manager |
 | Audit log | — | — | — | R | R |
+
+¹ solo a proprio nome. ² solo a proprio nome, anche note interne.
 
 ---
 
@@ -313,35 +374,39 @@ ruolo applicativo vero.
 
 ---
 
-## 11. Decisioni aperte
+## 11. Decisioni
 
-Queste non le ho scelte io: servono risposte per chiudere la prima versione.
+### Prese
 
-1. **Nome e database.** Il repo si chiama `fleetcare` come il modulo TPL di
-   Cerbero. Lo schema assume un **database dedicato**: confermare, e decidere
-   se il prodotto per le associazioni avrà un nome suo.
-2. **Volontari con utenza o tablet di sede?** Lo schema regge entrambi
-   (`crew_members` + `profiles`), ma la scelta decide il login e la PWA.
-3. **Come il distributore identifica il mezzo e in che formato manda il
-   riepilogo** (righe nella FatturaPA, PDF allegato, CSV)? Decide l'import.
-   Esiste una tessera per mezzo?
-4. **Bombole O2: di proprietà o del fornitore** (scambio vuoto per pieno)?
-   Se sono del fornitore, collaudo e scadenza del gas sono suoi: le scadenze
-   si disattivano.
-5. **Attrezzature in comodato dall'AST/118** (DAE, monitor): la manutenzione
-   la fanno loro o l'associazione? Decide se le scadenze sono nostre.
-6. **Revisione di pulmini e automedica**: la periodicità dipende da come sono
+| # | Domanda | Risposta | Effetto sullo schema |
+|---|---|---|---|
+| 1 | Branch `main` per la PR | sì | — |
+| 2 | Database | dedicato | schema `fleetcare` in un database solo suo |
+| 3 | Volontari con utenza? | sì: segnalano da un'app dedicata, sui propri dispositivi | `crew_members` confluisce in `profiles`; recapiti e credenziali in `profile_accounts`; `push_subscriptions`; «solo a proprio nome» nella RLS (§3) |
+| 4 | Come il distributore identifica il mezzo | dalla matricola | `fuel_vehicle_code` sul mezzo, `vehicle_ref_raw` sulla riga, riconoscimento matricola → numero interno → targa (§6) |
+| 5 | Bombole, DAE in comodato, chi tiene quali scadenze | lo sceglie ogni associazione | scadenzari interamente gestibili, `ownership_kinds` sulle regole, eliminazione con archiviazione dello storico (§7.2) |
+
+### Ancora aperte
+
+1. **«Matricola» = numero interno?** L'ho interpretata come il codice con cui
+   il distributore indica il mezzo: se è il numero interno dell'associazione
+   non serve altro; se è un suo codice, va scritto su ogni mezzo
+   (`fuel_vehicle_code`). Una fattura vera lo chiarisce.
+2. **Accesso dei volontari**: password o link via email? Con un centinaio di
+   volontari sui propri telefoni il link via email evita le password
+   dimenticate; `password_hash` è già facoltativo per questo.
+3. **Revisione di pulmini e automedica**: la periodicità dipende da come sono
    immatricolati. Va letta sulle carte di circolazione.
-7. **Autorizzazione sanitaria regionale**: durata e documento di riferimento
+4. **Autorizzazione sanitaria regionale**: durata e documento di riferimento
    per la Regione Marche.
-8. **Dotazione minima**: il seed è indicativo; va validata col direttore
+5. **Dotazione minima**: il seed è indicativo; va validata col direttore
    sanitario o con il riferimento regionale.
-9. **Blocco automatico**: quando una scadenza bloccante è superata, il mezzo
+6. **Blocco automatico**: quando una scadenza bloccante è superata, il mezzo
    passa a `grounded` da solo (job notturno) o si avvisa e basta? La mia
    raccomandazione è il blocco automatico con notifica, perché un'ambulanza
    con l'RCA scaduta che esce è il caso da rendere impossibile. Da decidere
    prima di scrivere il job.
-10. **Frequenza della sanificazione periodica** (seed: 30 giorni).
+7. **Frequenza della sanificazione periodica** (seed: 30 giorni).
 
 ---
 
@@ -355,5 +420,7 @@ Queste non le ho scelte io: servono risposte per chiudere la prima versione.
 2. **Inventario delle attrezzature** con matricole e posizione.
 3. **Una fattura vera del distributore** (XML e riepilogo) per scrivere
    l'import e tarare le tolleranze dell'abbinamento.
-4. Poi l'app (`apps/web`): scadenzario semaforico, scheda mezzo, check-list
-   PWA da tablet, rifornimenti con riconciliazione mensile.
+4. Poi le app: per i volontari (PWA sui propri dispositivi: segnalazioni,
+   check-list, rifornimenti, notifiche) e per i responsabili (scadenzario
+   semaforico e sua configurazione, scheda mezzo, riconciliazione mensile
+   del carburante).

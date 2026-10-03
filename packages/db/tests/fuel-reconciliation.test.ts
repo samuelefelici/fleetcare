@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   grossAmount,
   normalizePlate,
+  normalizeVehicleCode,
   reconcileFuel,
   resolveVehicleId,
   type FuelLogForMatch,
@@ -30,18 +31,45 @@ const line = (id: string, over: Partial<InvoiceLineForMatch> = {}): InvoiceLineF
   ...over,
 });
 
-describe("targhe", () => {
-  it("normalizza spazi, trattini e minuscole", () => {
+describe("riconoscimento del mezzo dalla matricola", () => {
+  const vehicles = [
+    { id: "amb1", plate: "FX123AB", internalCode: "05", fuelVehicleCode: null },
+    { id: "amb2", plate: "FX456AB", internalCode: "12", fuelVehicleCode: null },
+    { id: "pul1", plate: "GA456CD", internalCode: "20", fuelVehicleCode: "M-0012" },
+  ];
+
+  it("normalizza spazi, trattini, minuscole e zeri iniziali dei codici numerici", () => {
     expect(normalizePlate(" fx-123 ab ")).toBe("FX123AB");
+    expect(normalizeVehicleCode("005")).toBe("5");
+    expect(normalizeVehicleCode("0")).toBe("0");
+    expect(normalizeVehicleCode("m-0012")).toBe("M0012");
   });
-  it("riconosce il mezzo dalla targa o dal codice tessera", () => {
-    const vehicles = [
-      { id: "amb1", plate: "FX123AB", fuelCardCode: null },
-      { id: "pul1", plate: "GA456CD", fuelCardCode: "TESS-0007" },
+
+  it("la matricola del distributore registrata sul mezzo vince sul numero interno", () => {
+    expect(resolveVehicleId("M 0012", vehicles)).toBe("pul1");
+  });
+
+  it("senza matricola del distributore vale il numero interno, zeri compresi", () => {
+    expect(resolveVehicleId("5", vehicles)).toBe("amb1");
+    expect(resolveVehicleId("0005", vehicles)).toBe("amb1");
+    expect(resolveVehicleId("12", vehicles)).toBe("amb2");
+  });
+
+  it("la targa resta l'ultima risorsa", () => {
+    expect(resolveVehicleId("fx 456 ab", vehicles)).toBe("amb2");
+  });
+
+  it("se a un livello i mezzi possibili sono due, non indovina", () => {
+    const doppi = [
+      { id: "a", plate: "AA111AA", internalCode: "7", fuelVehicleCode: null },
+      { id: "b", plate: "BB222BB", internalCode: "007", fuelVehicleCode: null },
     ];
-    expect(resolveVehicleId("FX 123 AB", vehicles)).toBe("amb1");
-    expect(resolveVehicleId("tess 0007", vehicles)).toBe("pul1");
-    expect(resolveVehicleId("ZZ999ZZ", vehicles)).toBeNull();
+    expect(resolveVehicleId("7", doppi)).toBeNull();
+  });
+
+  it("matricola sconosciuta o vuota", () => {
+    expect(resolveVehicleId("99", vehicles)).toBeNull();
+    expect(resolveVehicleId("", vehicles)).toBeNull();
     expect(resolveVehicleId(null, vehicles)).toBeNull();
   });
 });
@@ -89,9 +117,9 @@ describe("reconcileFuel", () => {
     expect(r.lines[0]?.reason).toBe("fatturato ma nessun rifornimento registrato");
   });
 
-  it("targa non riconosciuta", () => {
+  it("matricola non riconosciuta", () => {
     const r = reconcileFuel([line("L1", { vehicleId: null })], [log("F1")]);
-    expect(r.lines[0]?.reason).toBe("targa non riconosciuta");
+    expect(r.lines[0]?.reason).toBe("matricola non riconosciuta");
     expect(r.unbilledLogIds).toEqual(["F1"]);
   });
 

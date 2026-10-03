@@ -105,8 +105,7 @@ CREATE TABLE "fleetcare"."checklists" (
 	"template_version" integer NOT NULL,
 	"performed_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"shift_label" text,
-	"crew_member_id" uuid,
-	"performed_by_id" uuid,
+	"performed_by_id" uuid NOT NULL,
 	"odometer_km" integer,
 	"fuel_level_pct" integer,
 	"has_anomalies" boolean DEFAULT false NOT NULL,
@@ -123,8 +122,7 @@ CREATE TABLE "fleetcare"."sanitizations" (
 	"vehicle_id" uuid NOT NULL,
 	"kind" "fleetcare"."sanitization_kind" NOT NULL,
 	"performed_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"crew_member_id" uuid,
-	"performed_by_id" uuid,
+	"performed_by_id" uuid NOT NULL,
 	"product" text,
 	"product_lot" text,
 	"method" text,
@@ -143,7 +141,7 @@ CREATE TABLE "fleetcare"."attachments" (
 	"mime_type" text NOT NULL,
 	"size_bytes" integer NOT NULL,
 	"storage_path" text NOT NULL,
-	"uploaded_by_id" uuid,
+	"uploaded_by_id" uuid NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "attachments_size_ck" CHECK ("fleetcare"."attachments"."size_bytes" >= 0)
 );
@@ -157,20 +155,6 @@ CREATE TABLE "fleetcare"."audit_logs" (
 	"actor_id" uuid,
 	"diff" jsonb,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
-);
---> statement-breakpoint
-CREATE TABLE "fleetcare"."crew_members" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"tenant_id" uuid NOT NULL,
-	"full_name" text NOT NULL,
-	"badge_number" text,
-	"is_driver" boolean DEFAULT false NOT NULL,
-	"profile_id" uuid,
-	"site_id" uuid,
-	"active" boolean DEFAULT true NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "crew_members_profile_id_unique" UNIQUE("profile_id")
 );
 --> statement-breakpoint
 CREATE TABLE "fleetcare"."document_counters" (
@@ -193,16 +177,41 @@ CREATE TABLE "fleetcare"."notifications" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "fleetcare"."profile_accounts" (
+	"profile_id" uuid PRIMARY KEY NOT NULL,
+	"tenant_id" uuid NOT NULL,
+	"email" text NOT NULL,
+	"phone" text,
+	"password_hash" text,
+	"last_login_at" timestamp with time zone,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "fleetcare"."profiles" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"tenant_id" uuid NOT NULL,
-	"email" text NOT NULL,
 	"full_name" text NOT NULL,
 	"role" "fleetcare"."profile_role" NOT NULL,
-	"password_hash" text,
+	"badge_number" text,
+	"is_driver" boolean DEFAULT false NOT NULL,
+	"site_id" uuid,
 	"active" boolean DEFAULT true NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "fleetcare"."push_subscriptions" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"tenant_id" uuid NOT NULL,
+	"profile_id" uuid NOT NULL,
+	"endpoint" text NOT NULL,
+	"p256dh" text NOT NULL,
+	"auth" text NOT NULL,
+	"user_agent" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"last_used_at" timestamp with time zone,
+	CONSTRAINT "push_subscriptions_endpoint_unique" UNIQUE("endpoint")
 );
 --> statement-breakpoint
 CREATE TABLE "fleetcare"."sites" (
@@ -286,9 +295,11 @@ CREATE TABLE "fleetcare"."deadline_rules" (
 	"interval_km" integer,
 	"alert_days" integer,
 	"blocking" boolean,
+	"ownership_kinds" "fleetcare"."ownership_kind"[],
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "deadline_rules_target_ck" CHECK (("fleetcare"."deadline_rules"."vehicle_category" is not null) <> ("fleetcare"."deadline_rules"."equipment_type_id" is not null)),
-	CONSTRAINT "deadline_rules_interval_ck" CHECK (not ("fleetcare"."deadline_rules"."interval_months" is not null and "fleetcare"."deadline_rules"."interval_days" is not null))
+	CONSTRAINT "deadline_rules_interval_ck" CHECK (not ("fleetcare"."deadline_rules"."interval_months" is not null and "fleetcare"."deadline_rules"."interval_days" is not null)),
+	CONSTRAINT "deadline_rules_ownership_ck" CHECK ("fleetcare"."deadline_rules"."ownership_kinds" is null or "fleetcare"."deadline_rules"."equipment_type_id" is not null)
 );
 --> statement-breakpoint
 CREATE TABLE "fleetcare"."deadline_types" (
@@ -307,7 +318,7 @@ CREATE TABLE "fleetcare"."deadline_types" (
 	"alert_km" integer,
 	"blocking" boolean DEFAULT false NOT NULL,
 	"document_required" boolean DEFAULT false NOT NULL,
-	"active" boolean DEFAULT true NOT NULL,
+	"archived_at" timestamp with time zone,
 	"sort_order" integer DEFAULT 0 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -331,7 +342,7 @@ CREATE TABLE "fleetcare"."deadlines" (
 	"blocking" boolean NOT NULL,
 	"last_done_on" date,
 	"last_done_km" integer,
-	"active" boolean DEFAULT true NOT NULL,
+	"archived_at" timestamp with time zone,
 	"notes" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -391,6 +402,16 @@ CREATE TABLE "fleetcare"."equipment_types" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "fleetcare"."fault_report_comments" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"tenant_id" uuid NOT NULL,
+	"fault_report_id" uuid NOT NULL,
+	"author_id" uuid NOT NULL,
+	"body" text NOT NULL,
+	"internal" boolean DEFAULT false NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "fleetcare"."fault_reports" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"tenant_id" uuid NOT NULL,
@@ -402,8 +423,7 @@ CREATE TABLE "fleetcare"."fault_reports" (
 	"severity" "fleetcare"."fault_severity" NOT NULL,
 	"status" "fleetcare"."fault_status" DEFAULT 'open' NOT NULL,
 	"unsafe" boolean DEFAULT false NOT NULL,
-	"crew_member_id" uuid,
-	"reported_by_id" uuid,
+	"reported_by_id" uuid NOT NULL,
 	"odometer_km" integer,
 	"maintenance_job_id" uuid,
 	"acknowledged_at" timestamp with time zone,
@@ -421,7 +441,7 @@ CREATE TABLE "fleetcare"."fuel_invoice_lines" (
 	"line_no" integer NOT NULL,
 	"refueled_on" date NOT NULL,
 	"refueled_time" time,
-	"plate_raw" text,
+	"vehicle_ref_raw" text,
 	"vehicle_id" uuid,
 	"product" "fleetcare"."fuel_product" DEFAULT 'diesel' NOT NULL,
 	"liters" numeric(8, 2),
@@ -471,8 +491,7 @@ CREATE TABLE "fleetcare"."fuel_logs" (
 	"full_tank" boolean DEFAULT true NOT NULL,
 	"odometer_km" integer,
 	"receipt_number" text,
-	"crew_member_id" uuid,
-	"recorded_by_id" uuid,
+	"recorded_by_id" uuid NOT NULL,
 	"source" text DEFAULT 'app' NOT NULL,
 	"notes" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -488,8 +507,7 @@ CREATE TABLE "fleetcare"."odometer_readings" (
 	"km" integer NOT NULL,
 	"source" "fleetcare"."odometer_source" DEFAULT 'manual' NOT NULL,
 	"read_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"crew_member_id" uuid,
-	"created_by_id" uuid,
+	"recorded_by_id" uuid NOT NULL,
 	CONSTRAINT "odometer_km_ck" CHECK ("fleetcare"."odometer_readings"."km" >= 0)
 );
 --> statement-breakpoint
@@ -535,7 +553,7 @@ CREATE TABLE "fleetcare"."vehicles" (
 	"bollo_exempt" boolean DEFAULT false NOT NULL,
 	"odometer_km" integer DEFAULT 0 NOT NULL,
 	"odometer_updated_at" timestamp with time zone,
-	"fuel_card_code" text,
+	"fuel_vehicle_code" text,
 	"decommissioned_on" date,
 	"decommission_reason" text,
 	"notes" text,
@@ -634,7 +652,7 @@ CREATE TABLE "fleetcare"."supply_lots" (
 --> statement-breakpoint
 ALTER TABLE "fleetcare"."accidents" ADD CONSTRAINT "accidents_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."accidents" ADD CONSTRAINT "accidents_vehicle_id_vehicles_id_fk" FOREIGN KEY ("vehicle_id") REFERENCES "fleetcare"."vehicles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "fleetcare"."accidents" ADD CONSTRAINT "accidents_driver_id_crew_members_id_fk" FOREIGN KEY ("driver_id") REFERENCES "fleetcare"."crew_members"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "fleetcare"."accidents" ADD CONSTRAINT "accidents_driver_id_profiles_id_fk" FOREIGN KEY ("driver_id") REFERENCES "fleetcare"."profiles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."accidents" ADD CONSTRAINT "accidents_insurer_id_suppliers_id_fk" FOREIGN KEY ("insurer_id") REFERENCES "fleetcare"."suppliers"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."accidents" ADD CONSTRAINT "accidents_created_by_id_profiles_id_fk" FOREIGN KEY ("created_by_id") REFERENCES "fleetcare"."profiles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."checklist_answers" ADD CONSTRAINT "checklist_answers_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -649,25 +667,25 @@ ALTER TABLE "fleetcare"."checklist_templates" ADD CONSTRAINT "checklist_template
 ALTER TABLE "fleetcare"."checklists" ADD CONSTRAINT "checklists_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."checklists" ADD CONSTRAINT "checklists_vehicle_id_vehicles_id_fk" FOREIGN KEY ("vehicle_id") REFERENCES "fleetcare"."vehicles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."checklists" ADD CONSTRAINT "checklists_template_id_checklist_templates_id_fk" FOREIGN KEY ("template_id") REFERENCES "fleetcare"."checklist_templates"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "fleetcare"."checklists" ADD CONSTRAINT "checklists_crew_member_id_crew_members_id_fk" FOREIGN KEY ("crew_member_id") REFERENCES "fleetcare"."crew_members"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."checklists" ADD CONSTRAINT "checklists_performed_by_id_profiles_id_fk" FOREIGN KEY ("performed_by_id") REFERENCES "fleetcare"."profiles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."sanitizations" ADD CONSTRAINT "sanitizations_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."sanitizations" ADD CONSTRAINT "sanitizations_vehicle_id_vehicles_id_fk" FOREIGN KEY ("vehicle_id") REFERENCES "fleetcare"."vehicles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "fleetcare"."sanitizations" ADD CONSTRAINT "sanitizations_crew_member_id_crew_members_id_fk" FOREIGN KEY ("crew_member_id") REFERENCES "fleetcare"."crew_members"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."sanitizations" ADD CONSTRAINT "sanitizations_performed_by_id_profiles_id_fk" FOREIGN KEY ("performed_by_id") REFERENCES "fleetcare"."profiles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."attachments" ADD CONSTRAINT "attachments_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."attachments" ADD CONSTRAINT "attachments_uploaded_by_id_profiles_id_fk" FOREIGN KEY ("uploaded_by_id") REFERENCES "fleetcare"."profiles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "fleetcare"."crew_members" ADD CONSTRAINT "crew_members_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "fleetcare"."crew_members" ADD CONSTRAINT "crew_members_profile_id_profiles_id_fk" FOREIGN KEY ("profile_id") REFERENCES "fleetcare"."profiles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "fleetcare"."crew_members" ADD CONSTRAINT "crew_members_site_id_sites_id_fk" FOREIGN KEY ("site_id") REFERENCES "fleetcare"."sites"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."document_counters" ADD CONSTRAINT "document_counters_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."notifications" ADD CONSTRAINT "notifications_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."notifications" ADD CONSTRAINT "notifications_recipient_id_profiles_id_fk" FOREIGN KEY ("recipient_id") REFERENCES "fleetcare"."profiles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "fleetcare"."profile_accounts" ADD CONSTRAINT "profile_accounts_profile_id_profiles_id_fk" FOREIGN KEY ("profile_id") REFERENCES "fleetcare"."profiles"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "fleetcare"."profile_accounts" ADD CONSTRAINT "profile_accounts_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."profiles" ADD CONSTRAINT "profiles_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "fleetcare"."profiles" ADD CONSTRAINT "profiles_site_id_sites_id_fk" FOREIGN KEY ("site_id") REFERENCES "fleetcare"."sites"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "fleetcare"."push_subscriptions" ADD CONSTRAINT "push_subscriptions_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "fleetcare"."push_subscriptions" ADD CONSTRAINT "push_subscriptions_profile_id_profiles_id_fk" FOREIGN KEY ("profile_id") REFERENCES "fleetcare"."profiles"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."sites" ADD CONSTRAINT "sites_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."suppliers" ADD CONSTRAINT "suppliers_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."deadline_completions" ADD CONSTRAINT "deadline_completions_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "fleetcare"."deadline_completions" ADD CONSTRAINT "deadline_completions_deadline_id_deadlines_id_fk" FOREIGN KEY ("deadline_id") REFERENCES "fleetcare"."deadlines"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "fleetcare"."deadline_completions" ADD CONSTRAINT "deadline_completions_deadline_id_deadlines_id_fk" FOREIGN KEY ("deadline_id") REFERENCES "fleetcare"."deadlines"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."deadline_completions" ADD CONSTRAINT "deadline_completions_supplier_id_suppliers_id_fk" FOREIGN KEY ("supplier_id") REFERENCES "fleetcare"."suppliers"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."deadline_completions" ADD CONSTRAINT "deadline_completions_maintenance_job_id_maintenance_jobs_id_fk" FOREIGN KEY ("maintenance_job_id") REFERENCES "fleetcare"."maintenance_jobs"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."deadline_completions" ADD CONSTRAINT "deadline_completions_recorded_by_id_profiles_id_fk" FOREIGN KEY ("recorded_by_id") REFERENCES "fleetcare"."profiles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -691,10 +709,12 @@ ALTER TABLE "fleetcare"."equipment_movements" ADD CONSTRAINT "equipment_movement
 ALTER TABLE "fleetcare"."equipment_movements" ADD CONSTRAINT "equipment_movements_to_site_id_sites_id_fk" FOREIGN KEY ("to_site_id") REFERENCES "fleetcare"."sites"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."equipment_movements" ADD CONSTRAINT "equipment_movements_moved_by_id_profiles_id_fk" FOREIGN KEY ("moved_by_id") REFERENCES "fleetcare"."profiles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."equipment_types" ADD CONSTRAINT "equipment_types_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "fleetcare"."fault_report_comments" ADD CONSTRAINT "fault_report_comments_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "fleetcare"."fault_report_comments" ADD CONSTRAINT "fault_report_comments_fault_report_id_fault_reports_id_fk" FOREIGN KEY ("fault_report_id") REFERENCES "fleetcare"."fault_reports"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "fleetcare"."fault_report_comments" ADD CONSTRAINT "fault_report_comments_author_id_profiles_id_fk" FOREIGN KEY ("author_id") REFERENCES "fleetcare"."profiles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."fault_reports" ADD CONSTRAINT "fault_reports_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."fault_reports" ADD CONSTRAINT "fault_reports_vehicle_id_vehicles_id_fk" FOREIGN KEY ("vehicle_id") REFERENCES "fleetcare"."vehicles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."fault_reports" ADD CONSTRAINT "fault_reports_equipment_id_equipment_id_fk" FOREIGN KEY ("equipment_id") REFERENCES "fleetcare"."equipment"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "fleetcare"."fault_reports" ADD CONSTRAINT "fault_reports_crew_member_id_crew_members_id_fk" FOREIGN KEY ("crew_member_id") REFERENCES "fleetcare"."crew_members"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."fault_reports" ADD CONSTRAINT "fault_reports_reported_by_id_profiles_id_fk" FOREIGN KEY ("reported_by_id") REFERENCES "fleetcare"."profiles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."fault_reports" ADD CONSTRAINT "fault_reports_maintenance_job_id_maintenance_jobs_id_fk" FOREIGN KEY ("maintenance_job_id") REFERENCES "fleetcare"."maintenance_jobs"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."fuel_invoice_lines" ADD CONSTRAINT "fuel_invoice_lines_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -707,12 +727,10 @@ ALTER TABLE "fleetcare"."fuel_invoices" ADD CONSTRAINT "fuel_invoices_created_by
 ALTER TABLE "fleetcare"."fuel_logs" ADD CONSTRAINT "fuel_logs_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."fuel_logs" ADD CONSTRAINT "fuel_logs_vehicle_id_vehicles_id_fk" FOREIGN KEY ("vehicle_id") REFERENCES "fleetcare"."vehicles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."fuel_logs" ADD CONSTRAINT "fuel_logs_supplier_id_suppliers_id_fk" FOREIGN KEY ("supplier_id") REFERENCES "fleetcare"."suppliers"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "fleetcare"."fuel_logs" ADD CONSTRAINT "fuel_logs_crew_member_id_crew_members_id_fk" FOREIGN KEY ("crew_member_id") REFERENCES "fleetcare"."crew_members"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."fuel_logs" ADD CONSTRAINT "fuel_logs_recorded_by_id_profiles_id_fk" FOREIGN KEY ("recorded_by_id") REFERENCES "fleetcare"."profiles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."odometer_readings" ADD CONSTRAINT "odometer_readings_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."odometer_readings" ADD CONSTRAINT "odometer_readings_vehicle_id_vehicles_id_fk" FOREIGN KEY ("vehicle_id") REFERENCES "fleetcare"."vehicles"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "fleetcare"."odometer_readings" ADD CONSTRAINT "odometer_readings_crew_member_id_crew_members_id_fk" FOREIGN KEY ("crew_member_id") REFERENCES "fleetcare"."crew_members"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "fleetcare"."odometer_readings" ADD CONSTRAINT "odometer_readings_created_by_id_profiles_id_fk" FOREIGN KEY ("created_by_id") REFERENCES "fleetcare"."profiles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "fleetcare"."odometer_readings" ADD CONSTRAINT "odometer_readings_recorded_by_id_profiles_id_fk" FOREIGN KEY ("recorded_by_id") REFERENCES "fleetcare"."profiles"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."vehicles" ADD CONSTRAINT "vehicles_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."vehicles" ADD CONSTRAINT "vehicles_site_id_sites_id_fk" FOREIGN KEY ("site_id") REFERENCES "fleetcare"."sites"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleetcare"."maintenance_jobs" ADD CONSTRAINT "maintenance_jobs_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "fleetcare"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -745,12 +763,12 @@ CREATE INDEX "checklists_vehicle_idx" ON "fleetcare"."checklists" USING btree ("
 CREATE INDEX "sanitizations_vehicle_idx" ON "fleetcare"."sanitizations" USING btree ("tenant_id","vehicle_id","performed_at");--> statement-breakpoint
 CREATE INDEX "attachments_entity_idx" ON "fleetcare"."attachments" USING btree ("tenant_id","entity_type","entity_id");--> statement-breakpoint
 CREATE INDEX "audit_logs_tenant_table_idx" ON "fleetcare"."audit_logs" USING btree ("tenant_id","table_name","created_at");--> statement-breakpoint
-CREATE INDEX "crew_members_tenant_name_idx" ON "fleetcare"."crew_members" USING btree ("tenant_id","full_name");--> statement-breakpoint
-CREATE UNIQUE INDEX "crew_members_tenant_badge_uq" ON "fleetcare"."crew_members" USING btree ("tenant_id","badge_number") WHERE "fleetcare"."crew_members"."badge_number" is not null;--> statement-breakpoint
 CREATE UNIQUE INDEX "document_counters_uq" ON "fleetcare"."document_counters" USING btree ("tenant_id","kind","year");--> statement-breakpoint
 CREATE INDEX "notifications_recipient_idx" ON "fleetcare"."notifications" USING btree ("tenant_id","recipient_id","read_at");--> statement-breakpoint
-CREATE UNIQUE INDEX "profiles_tenant_email_uq" ON "fleetcare"."profiles" USING btree ("tenant_id","email");--> statement-breakpoint
-CREATE INDEX "profiles_tenant_idx" ON "fleetcare"."profiles" USING btree ("tenant_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "profile_accounts_tenant_email_uq" ON "fleetcare"."profile_accounts" USING btree ("tenant_id",lower("email"));--> statement-breakpoint
+CREATE INDEX "profiles_tenant_name_idx" ON "fleetcare"."profiles" USING btree ("tenant_id","full_name");--> statement-breakpoint
+CREATE UNIQUE INDEX "profiles_tenant_badge_uq" ON "fleetcare"."profiles" USING btree ("tenant_id","badge_number") WHERE "fleetcare"."profiles"."badge_number" is not null;--> statement-breakpoint
+CREATE INDEX "push_subscriptions_profile_idx" ON "fleetcare"."push_subscriptions" USING btree ("tenant_id","profile_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "sites_tenant_name_uq" ON "fleetcare"."sites" USING btree ("tenant_id","name");--> statement-breakpoint
 CREATE INDEX "suppliers_tenant_name_idx" ON "fleetcare"."suppliers" USING btree ("tenant_id","name");--> statement-breakpoint
 CREATE UNIQUE INDEX "suppliers_tenant_vat_uq" ON "fleetcare"."suppliers" USING btree ("tenant_id","vat_number") WHERE "fleetcare"."suppliers"."vat_number" is not null;--> statement-breakpoint
@@ -769,6 +787,7 @@ CREATE INDEX "equipment_type_idx" ON "fleetcare"."equipment" USING btree ("tenan
 CREATE UNIQUE INDEX "equipment_tenant_inventory_uq" ON "fleetcare"."equipment" USING btree ("tenant_id","inventory_code") WHERE "fleetcare"."equipment"."inventory_code" is not null;--> statement-breakpoint
 CREATE INDEX "equipment_movements_eq_idx" ON "fleetcare"."equipment_movements" USING btree ("tenant_id","equipment_id","moved_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "equipment_types_tenant_code_uq" ON "fleetcare"."equipment_types" USING btree ("tenant_id","code");--> statement-breakpoint
+CREATE INDEX "fault_report_comments_report_idx" ON "fleetcare"."fault_report_comments" USING btree ("tenant_id","fault_report_id","created_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "fault_reports_tenant_number_uq" ON "fleetcare"."fault_reports" USING btree ("tenant_id","number");--> statement-breakpoint
 CREATE INDEX "fault_reports_tenant_status_idx" ON "fleetcare"."fault_reports" USING btree ("tenant_id","status");--> statement-breakpoint
 CREATE INDEX "fault_reports_vehicle_idx" ON "fleetcare"."fault_reports" USING btree ("tenant_id","vehicle_id","status");--> statement-breakpoint

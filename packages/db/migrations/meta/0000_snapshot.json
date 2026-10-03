@@ -1,5 +1,5 @@
 {
-  "id": "77dd6c34-22b4-46b2-baa7-8da7f3234cf7",
+  "id": "17037093-557b-4b49-ab54-a7bc1154dfb3",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -282,10 +282,10 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "accidents_driver_id_crew_members_id_fk": {
-          "name": "accidents_driver_id_crew_members_id_fk",
+        "accidents_driver_id_profiles_id_fk": {
+          "name": "accidents_driver_id_profiles_id_fk",
           "tableFrom": "accidents",
-          "tableTo": "crew_members",
+          "tableTo": "profiles",
           "schemaTo": "fleetcare",
           "columnsFrom": [
             "driver_id"
@@ -841,17 +841,11 @@
           "primaryKey": false,
           "notNull": false
         },
-        "crew_member_id": {
-          "name": "crew_member_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "performed_by_id": {
           "name": "performed_by_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "odometer_km": {
           "name": "odometer_km",
@@ -971,20 +965,6 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "checklists_crew_member_id_crew_members_id_fk": {
-          "name": "checklists_crew_member_id_crew_members_id_fk",
-          "tableFrom": "checklists",
-          "tableTo": "crew_members",
-          "schemaTo": "fleetcare",
-          "columnsFrom": [
-            "crew_member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "checklists_performed_by_id_profiles_id_fk": {
           "name": "checklists_performed_by_id_profiles_id_fk",
           "tableFrom": "checklists",
@@ -1048,17 +1028,11 @@
           "notNull": true,
           "default": "now()"
         },
-        "crew_member_id": {
-          "name": "crew_member_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "performed_by_id": {
           "name": "performed_by_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "product": {
           "name": "product",
@@ -1156,20 +1130,6 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "sanitizations_crew_member_id_crew_members_id_fk": {
-          "name": "sanitizations_crew_member_id_crew_members_id_fk",
-          "tableFrom": "sanitizations",
-          "tableTo": "crew_members",
-          "schemaTo": "fleetcare",
-          "columnsFrom": [
-            "crew_member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "sanitizations_performed_by_id_profiles_id_fk": {
           "name": "sanitizations_performed_by_id_profiles_id_fk",
           "tableFrom": "sanitizations",
@@ -1256,7 +1216,7 @@
           "name": "uploaded_by_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "created_at": {
           "name": "created_at",
@@ -1423,179 +1383,6 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "fleetcare.crew_members": {
-      "name": "crew_members",
-      "schema": "fleetcare",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "tenant_id": {
-          "name": "tenant_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "full_name": {
-          "name": "full_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "badge_number": {
-          "name": "badge_number",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "is_driver": {
-          "name": "is_driver",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
-        "profile_id": {
-          "name": "profile_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "site_id": {
-          "name": "site_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "active": {
-          "name": "active",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "crew_members_tenant_name_idx": {
-          "name": "crew_members_tenant_name_idx",
-          "columns": [
-            {
-              "expression": "tenant_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "full_name",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "crew_members_tenant_badge_uq": {
-          "name": "crew_members_tenant_badge_uq",
-          "columns": [
-            {
-              "expression": "tenant_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "badge_number",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"fleetcare\".\"crew_members\".\"badge_number\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "crew_members_tenant_id_tenants_id_fk": {
-          "name": "crew_members_tenant_id_tenants_id_fk",
-          "tableFrom": "crew_members",
-          "tableTo": "tenants",
-          "schemaTo": "fleetcare",
-          "columnsFrom": [
-            "tenant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "crew_members_profile_id_profiles_id_fk": {
-          "name": "crew_members_profile_id_profiles_id_fk",
-          "tableFrom": "crew_members",
-          "tableTo": "profiles",
-          "schemaTo": "fleetcare",
-          "columnsFrom": [
-            "profile_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "crew_members_site_id_sites_id_fk": {
-          "name": "crew_members_site_id_sites_id_fk",
-          "tableFrom": "crew_members",
-          "tableTo": "sites",
-          "schemaTo": "fleetcare",
-          "columnsFrom": [
-            "site_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "crew_members_profile_id_unique": {
-          "name": "crew_members_profile_id_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "profile_id"
-          ]
-        }
-      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -1816,6 +1603,120 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "fleetcare.profile_accounts": {
+      "name": "profile_accounts",
+      "schema": "fleetcare",
+      "columns": {
+        "profile_id": {
+          "name": "profile_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "password_hash": {
+          "name": "password_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_login_at": {
+          "name": "last_login_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "profile_accounts_tenant_email_uq": {
+          "name": "profile_accounts_tenant_email_uq",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "lower(\"email\")",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "profile_accounts_profile_id_profiles_id_fk": {
+          "name": "profile_accounts_profile_id_profiles_id_fk",
+          "tableFrom": "profile_accounts",
+          "tableTo": "profiles",
+          "schemaTo": "fleetcare",
+          "columnsFrom": [
+            "profile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "profile_accounts_tenant_id_tenants_id_fk": {
+          "name": "profile_accounts_tenant_id_tenants_id_fk",
+          "tableFrom": "profile_accounts",
+          "tableTo": "tenants",
+          "schemaTo": "fleetcare",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "fleetcare.profiles": {
       "name": "profiles",
       "schema": "fleetcare",
@@ -1833,12 +1734,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "email": {
-          "name": "email",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
         "full_name": {
           "name": "full_name",
           "type": "text",
@@ -1852,9 +1747,22 @@
           "primaryKey": false,
           "notNull": true
         },
-        "password_hash": {
-          "name": "password_hash",
+        "badge_number": {
+          "name": "badge_number",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_driver": {
+          "name": "is_driver",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "site_id": {
+          "name": "site_id",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": false
         },
@@ -1881,8 +1789,8 @@
         }
       },
       "indexes": {
-        "profiles_tenant_email_uq": {
-          "name": "profiles_tenant_email_uq",
+        "profiles_tenant_name_idx": {
+          "name": "profiles_tenant_name_idx",
           "columns": [
             {
               "expression": "tenant_id",
@@ -1891,28 +1799,35 @@
               "nulls": "last"
             },
             {
-              "expression": "email",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "profiles_tenant_idx": {
-          "name": "profiles_tenant_idx",
-          "columns": [
-            {
-              "expression": "tenant_id",
+              "expression": "full_name",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "profiles_tenant_badge_uq": {
+          "name": "profiles_tenant_badge_uq",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "badge_number",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"fleetcare\".\"profiles\".\"badge_number\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -1932,10 +1847,152 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "profiles_site_id_sites_id_fk": {
+          "name": "profiles_site_id_sites_id_fk",
+          "tableFrom": "profiles",
+          "tableTo": "sites",
+          "schemaTo": "fleetcare",
+          "columnsFrom": [
+            "site_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "fleetcare.push_subscriptions": {
+      "name": "push_subscriptions",
+      "schema": "fleetcare",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "profile_id": {
+          "name": "profile_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "endpoint": {
+          "name": "endpoint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "p256dh": {
+          "name": "p256dh",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "auth": {
+          "name": "auth",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_agent": {
+          "name": "user_agent",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "last_used_at": {
+          "name": "last_used_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "push_subscriptions_profile_idx": {
+          "name": "push_subscriptions_profile_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "profile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "push_subscriptions_tenant_id_tenants_id_fk": {
+          "name": "push_subscriptions_tenant_id_tenants_id_fk",
+          "tableFrom": "push_subscriptions",
+          "tableTo": "tenants",
+          "schemaTo": "fleetcare",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "push_subscriptions_profile_id_profiles_id_fk": {
+          "name": "push_subscriptions_profile_id_profiles_id_fk",
+          "tableFrom": "push_subscriptions",
+          "tableTo": "profiles",
+          "schemaTo": "fleetcare",
+          "columnsFrom": [
+            "profile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "push_subscriptions_endpoint_unique": {
+          "name": "push_subscriptions_endpoint_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "endpoint"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -2503,7 +2560,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         },
         "deadline_completions_supplier_id_suppliers_id_fk": {
@@ -2618,6 +2675,13 @@
         "blocking": {
           "name": "blocking",
           "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ownership_kinds": {
+          "name": "ownership_kinds",
+          "type": "ownership_kind[]",
+          "typeSchema": "fleetcare",
           "primaryKey": false,
           "notNull": false
         },
@@ -2742,6 +2806,10 @@
         "deadline_rules_interval_ck": {
           "name": "deadline_rules_interval_ck",
           "value": "not (\"fleetcare\".\"deadline_rules\".\"interval_months\" is not null and \"fleetcare\".\"deadline_rules\".\"interval_days\" is not null)"
+        },
+        "deadline_rules_ownership_ck": {
+          "name": "deadline_rules_ownership_ck",
+          "value": "\"fleetcare\".\"deadline_rules\".\"ownership_kinds\" is null or \"fleetcare\".\"deadline_rules\".\"equipment_type_id\" is not null"
         }
       },
       "isRLSEnabled": false
@@ -2846,12 +2914,11 @@
           "notNull": true,
           "default": false
         },
-        "active": {
-          "name": "active",
-          "type": "boolean",
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": true,
-          "default": true
+          "notNull": false
         },
         "sort_order": {
           "name": "sort_order",
@@ -3027,12 +3094,11 @@
           "primaryKey": false,
           "notNull": false
         },
-        "active": {
-          "name": "active",
-          "type": "boolean",
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": true,
-          "default": true
+          "notNull": false
         },
         "notes": {
           "name": "notes",
@@ -3882,6 +3948,135 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "fleetcare.fault_report_comments": {
+      "name": "fault_report_comments",
+      "schema": "fleetcare",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fault_report_id": {
+          "name": "fault_report_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "author_id": {
+          "name": "author_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "internal": {
+          "name": "internal",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "fault_report_comments_report_idx": {
+          "name": "fault_report_comments_report_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "fault_report_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fault_report_comments_tenant_id_tenants_id_fk": {
+          "name": "fault_report_comments_tenant_id_tenants_id_fk",
+          "tableFrom": "fault_report_comments",
+          "tableTo": "tenants",
+          "schemaTo": "fleetcare",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fault_report_comments_fault_report_id_fault_reports_id_fk": {
+          "name": "fault_report_comments_fault_report_id_fault_reports_id_fk",
+          "tableFrom": "fault_report_comments",
+          "tableTo": "fault_reports",
+          "schemaTo": "fleetcare",
+          "columnsFrom": [
+            "fault_report_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "fault_report_comments_author_id_profiles_id_fk": {
+          "name": "fault_report_comments_author_id_profiles_id_fk",
+          "tableFrom": "fault_report_comments",
+          "tableTo": "profiles",
+          "schemaTo": "fleetcare",
+          "columnsFrom": [
+            "author_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "fleetcare.fault_reports": {
       "name": "fault_reports",
       "schema": "fleetcare",
@@ -3953,17 +4148,11 @@
           "notNull": true,
           "default": false
         },
-        "crew_member_id": {
-          "name": "crew_member_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "reported_by_id": {
           "name": "reported_by_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "odometer_km": {
           "name": "odometer_km",
@@ -4151,20 +4340,6 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "fault_reports_crew_member_id_crew_members_id_fk": {
-          "name": "fault_reports_crew_member_id_crew_members_id_fk",
-          "tableFrom": "fault_reports",
-          "tableTo": "crew_members",
-          "schemaTo": "fleetcare",
-          "columnsFrom": [
-            "crew_member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "fault_reports_reported_by_id_profiles_id_fk": {
           "name": "fault_reports_reported_by_id_profiles_id_fk",
           "tableFrom": "fault_reports",
@@ -4241,8 +4416,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "plate_raw": {
-          "name": "plate_raw",
+        "vehicle_ref_raw": {
+          "name": "vehicle_ref_raw",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -4764,17 +4939,11 @@
           "primaryKey": false,
           "notNull": false
         },
-        "crew_member_id": {
-          "name": "crew_member_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "recorded_by_id": {
           "name": "recorded_by_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "source": {
           "name": "source",
@@ -4897,20 +5066,6 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "fuel_logs_crew_member_id_crew_members_id_fk": {
-          "name": "fuel_logs_crew_member_id_crew_members_id_fk",
-          "tableFrom": "fuel_logs",
-          "tableTo": "crew_members",
-          "schemaTo": "fleetcare",
-          "columnsFrom": [
-            "crew_member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "fuel_logs_recorded_by_id_profiles_id_fk": {
           "name": "fuel_logs_recorded_by_id_profiles_id_fk",
           "tableFrom": "fuel_logs",
@@ -4985,17 +5140,11 @@
           "notNull": true,
           "default": "now()"
         },
-        "crew_member_id": {
-          "name": "crew_member_id",
+        "recorded_by_id": {
+          "name": "recorded_by_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
-        },
-        "created_by_id": {
-          "name": "created_by_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
+          "notNull": true
         }
       },
       "indexes": {
@@ -5056,27 +5205,13 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "odometer_readings_crew_member_id_crew_members_id_fk": {
-          "name": "odometer_readings_crew_member_id_crew_members_id_fk",
-          "tableFrom": "odometer_readings",
-          "tableTo": "crew_members",
-          "schemaTo": "fleetcare",
-          "columnsFrom": [
-            "crew_member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "odometer_readings_created_by_id_profiles_id_fk": {
-          "name": "odometer_readings_created_by_id_profiles_id_fk",
+        "odometer_readings_recorded_by_id_profiles_id_fk": {
+          "name": "odometer_readings_recorded_by_id_profiles_id_fk",
           "tableFrom": "odometer_readings",
           "tableTo": "profiles",
           "schemaTo": "fleetcare",
           "columnsFrom": [
-            "created_by_id"
+            "recorded_by_id"
           ],
           "columnsTo": [
             "id"
@@ -5359,8 +5494,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "fuel_card_code": {
-          "name": "fuel_card_code",
+        "fuel_vehicle_code": {
+          "name": "fuel_vehicle_code",
           "type": "text",
           "primaryKey": false,
           "notNull": false

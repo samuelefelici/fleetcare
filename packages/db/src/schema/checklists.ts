@@ -12,7 +12,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { fleetcareSchema } from "./_schema";
-import { crewMembers, profiles, tenants } from "./core";
+import { profiles, tenants } from "./core";
 import { checkOutcome, checklistItemKind, sanitizationKind, vehicleCategory } from "./enums";
 import { equipmentTypes } from "./equipment";
 import { faultReports } from "./faults";
@@ -106,8 +106,10 @@ export const checklists = fleetcareSchema.table(
     performedAt: timestamp("performed_at", { withTimezone: true }).notNull().defaultNow(),
     /** "mattina", "pomeriggio", "notte": testo, i turni non sono materia del parco mezzi */
     shiftLabel: text("shift_label"),
-    crewMemberId: uuid("crew_member_id").references(() => crewMembers.id),
-    performedById: uuid("performed_by_id").references(() => profiles.id),
+    /** chi ha fatto il controllo */
+    performedById: uuid("performed_by_id")
+      .notNull()
+      .references(() => profiles.id),
     odometerKm: integer("odometer_km"),
     fuelLevelPct: integer("fuel_level_pct"),
     hasAnomalies: boolean("has_anomalies").notNull().default(false),
@@ -174,8 +176,10 @@ export const sanitizations = fleetcareSchema.table(
       .references(() => vehicles.id),
     kind: sanitizationKind("kind").notNull(),
     performedAt: timestamp("performed_at", { withTimezone: true }).notNull().defaultNow(),
-    crewMemberId: uuid("crew_member_id").references(() => crewMembers.id),
-    performedById: uuid("performed_by_id").references(() => profiles.id),
+    /** chi ha sanificato */
+    performedById: uuid("performed_by_id")
+      .notNull()
+      .references(() => profiles.id),
     /** prodotto e lotto del disinfettante */
     product: text("product"),
     productLot: text("product_lot"),

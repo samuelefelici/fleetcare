@@ -31,7 +31,7 @@ export interface FuelLogForMatch {
 
 export interface InvoiceLineForMatch {
   id: string;
-  /** null se la targa della riga non è stata riconosciuta */
+  /** null se la matricola della riga non è stata riconosciuta */
   vehicleId: string | null;
   refueledOn: IsoDate;
   product: string;
@@ -73,20 +73,49 @@ export function normalizePlate(raw: string): string {
   return raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
-/** Riconosce il mezzo dalla targa scritta dal distributore o dal codice tessera. */
+/**
+ * Matricola o numero interno normalizzati: come la targa, e in più un
+ * codice fatto solo di cifre perde gli zeri iniziali («005» e «5» sono lo
+ * stesso mezzo: il distributore e l'associazione non li scrivono uguali).
+ */
+export function normalizeVehicleCode(raw: string): string {
+  const key = normalizePlate(raw);
+  return /^\d+$/.test(key) ? key.replace(/^0+(?=\d)/, "") : key;
+}
+
+export interface VehicleForMatch {
+  id: string;
+  plate: string;
+  internalCode: string;
+  /** la matricola del distributore, se diversa dal numero interno */
+  fuelVehicleCode: string | null;
+}
+
+/**
+ * Riconosce il mezzo dalla matricola scritta dal distributore. Prova, in
+ * ordine: la matricola del distributore registrata sul mezzo, il numero
+ * interno, la targa. Al primo livello che dà un risultato si ferma; se a
+ * quel livello i mezzi possibili sono più di uno non indovina: restituisce
+ * null e la riga resta da abbinare a mano.
+ */
 export function resolveVehicleId(
-  plateRaw: string | null,
-  vehicles: ReadonlyArray<{ id: string; plate: string; fuelCardCode: string | null }>,
+  vehicleRefRaw: string | null,
+  vehicles: ReadonlyArray<VehicleForMatch>,
 ): string | null {
-  if (!plateRaw) return null;
-  const key = normalizePlate(plateRaw);
-  if (!key) return null;
-  const hit = vehicles.find(
-    (v) =>
-      normalizePlate(v.plate) === key ||
-      (v.fuelCardCode !== null && normalizePlate(v.fuelCardCode) === key),
-  );
-  return hit?.id ?? null;
+  if (!vehicleRefRaw) return null;
+  const code = normalizeVehicleCode(vehicleRefRaw);
+  if (!code) return null;
+  const tiers: Array<(v: VehicleForMatch) => boolean> = [
+    (v) => v.fuelVehicleCode !== null && normalizeVehicleCode(v.fuelVehicleCode) === code,
+    (v) => normalizeVehicleCode(v.internalCode) === code,
+    (v) => normalizePlate(v.plate) === normalizePlate(vehicleRefRaw),
+  ];
+  for (const matches of tiers) {
+    const hits = vehicles.filter(matches);
+    if (hits.length === 1) return hits[0]!.id;
+    if (hits.length > 1) return null;
+  }
+  return null;
 }
 
 /** Importo della riga al lordo IVA, arrotondato al centesimo. */
@@ -237,7 +266,7 @@ export function reconcileFuel(
         amountDiff: null,
         reason:
           line.vehicleId === null
-            ? "targa non riconosciuta"
+            ? "matricola non riconosciuta"
             : "fatturato ma nessun rifornimento registrato",
       },
   );

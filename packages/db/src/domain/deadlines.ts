@@ -221,3 +221,51 @@ export function resolveRule(
     blocking: rule.blocking ?? type.blocking,
   };
 }
+
+/** Una regola come la legge chi deve far nascere le scadenze di un nuovo mezzo o attrezzatura. */
+export interface PlannableRule extends DeadlineRuleOverrides {
+  deadlineTypeId: string;
+  deadlineTypeCode: string;
+  vehicleCategory: string | null;
+  equipmentTypeId: string | null;
+  /** null = qualunque proprietà */
+  ownershipKinds: string[] | null;
+  /** il tipo di scadenza, con i suoi valori di default; archiviato = eliminato dall'associazione */
+  type: DeadlineTypeDefaults & { archived: boolean };
+}
+
+export type PlanSubject =
+  | { kind: "vehicle"; category: string; bolloExempt: boolean }
+  | { kind: "equipment"; equipmentTypeId: string; ownership: string };
+
+export interface PlannedDeadline extends DeadlineTypeDefaults {
+  deadlineTypeId: string;
+}
+
+/**
+ * Le scadenze che nascono per un mezzo o un'attrezzatura appena creati:
+ * le regole della sua categoria (o del suo tipo), con i valori risolti.
+ *
+ * - un tipo di scadenza archiviato non genera più niente;
+ * - una regola con `ownershipKinds` vale solo per quelle proprietà (la
+ *   bombola a scambio del fornitore non ha il collaudo a carico nostro);
+ * - un mezzo esente non riceve la scadenza `bollo`.
+ *
+ * Le date non si inventano: le scadenze nascono «da completare», la prima
+ * data la scrive chi ha in mano il documento.
+ */
+export function planDeadlines(
+  subject: PlanSubject,
+  rules: ReadonlyArray<PlannableRule>,
+): PlannedDeadline[] {
+  return rules
+    .filter((r) => !r.type.archived)
+    .filter((r) =>
+      subject.kind === "vehicle"
+        ? r.vehicleCategory === subject.category &&
+          !(subject.bolloExempt && r.deadlineTypeCode === "bollo")
+        : r.equipmentTypeId === subject.equipmentTypeId &&
+          (r.ownershipKinds === null || r.ownershipKinds.includes(subject.ownership)),
+    )
+    .map((r) => ({ deadlineTypeId: r.deadlineTypeId, ...resolveRule(r.type, r) }));
+}

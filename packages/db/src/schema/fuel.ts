@@ -13,7 +13,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { fleetcareSchema } from "./_schema";
-import { crewMembers, profiles, suppliers, tenants } from "./core";
+import { profiles, suppliers, tenants } from "./core";
 import { fuelInvoiceStatus, fuelMatchStatus, fuelProduct } from "./enums";
 import { vehicles } from "./vehicles";
 
@@ -64,8 +64,10 @@ export const fuelLogs = fleetcareSchema.table(
     odometerKm: integer("odometer_km"),
     /** n. del buono / scontrino: la chiave più forte per l'abbinamento con la fattura */
     receiptNumber: text("receipt_number"),
-    crewMemberId: uuid("crew_member_id").references(() => crewMembers.id),
-    recordedById: uuid("recorded_by_id").references(() => profiles.id),
+    /** chi ha fatto il rifornimento e lo ha registrato */
+    recordedById: uuid("recorded_by_id")
+      .notNull()
+      .references(() => profiles.id),
     /** 'app' (inserito dall'equipaggio) | 'invoice' (creato da una riga di fattura non registrata) */
     source: text("source").notNull().default("app"),
     notes: text("notes"),
@@ -125,8 +127,9 @@ export const fuelInvoices = fleetcareSchema.table(
 
 /**
  * Le righe del riepilogo rifornimenti allegato alla fattura, come le
- * scrive il distributore. La targa si tiene com'è (`plate_raw`) accanto
- * al mezzo riconosciuto: se il riconoscimento sbaglia, il dato d'origine
+ * scrive il distributore. Il distributore identifica il mezzo con la sua
+ * **matricola**: si tiene com'è scritta (`vehicle_ref_raw`) accanto al
+ * mezzo riconosciuto, così se il riconoscimento sbaglia il dato d'origine
  * c'è ancora.
  */
 export const fuelInvoiceLines = fleetcareSchema.table(
@@ -142,7 +145,8 @@ export const fuelInvoiceLines = fleetcareSchema.table(
     lineNo: integer("line_no").notNull(),
     refueledOn: date("refueled_on").notNull(),
     refueledTime: time("refueled_time"),
-    plateRaw: text("plate_raw"),
+    /** la matricola del mezzo come la scrive il distributore */
+    vehicleRefRaw: text("vehicle_ref_raw"),
     vehicleId: uuid("vehicle_id").references(() => vehicles.id),
     product: fuelProduct("product").notNull().default("diesel"),
     liters: numeric("liters", { precision: 8, scale: 2 }),

@@ -94,12 +94,16 @@ end
 $$;
 
 -- le tabelle dove una modifica deve poter essere ricostruita: stato dei
--- mezzi, scadenze e adempimenti (documentazione ispettiva), costi, denaro
+-- mezzi, scadenze e adempimenti (documentazione ispettiva), la
+-- configurazione degli scadenzari (ogni associazione la cambia da sé),
+-- ruoli delle persone, costi, denaro.
+-- `profile_accounts` NO: il diff finirebbe nell'audit con l'hash della password.
 do $$
 declare t text;
 begin
   foreach t in array array[
-    'vehicles', 'equipment', 'deadlines', 'deadline_completions',
+    'profiles', 'vehicles', 'equipment',
+    'deadline_types', 'deadline_rules', 'deadlines', 'deadline_completions',
     'maintenance_jobs', 'vehicle_downtimes', 'accidents',
     'fuel_logs', 'fuel_invoices', 'fuel_invoice_lines'
   ] loop
@@ -111,14 +115,20 @@ end
 $$;
 
 -- ---------- contachilometri: niente letture all'indietro ----------
--- Vale anche per le correzioni (UPDATE), escludendo dal confronto la riga
--- stessa: correggere un 100.000 battuto al posto di 10.000 deve passare,
--- spostare una lettura sotto quella del giorno prima no.
--- SECURITY DEFINER perché aggiorna `vehicles.odometer_km` anche quando la
--- lettura la inserisce un volontario, che sui mezzi non ha scrittura.
--- Tocca solo il mezzo della lettura, nello stesso tenant.
+-- Due trigger:
+--  * PRIMA della scrittura si valida: la lettura non può stare sotto una
+--    precedente né sopra una successiva. Vale anche per le correzioni
+--    (UPDATE), escludendo dal confronto la riga stessa: correggere un
+--    100.000 battuto al posto di 10.000 passa, scendere sotto la lettura
+--    del giorno prima no.
+--  * DOPO (insert, update, delete) il km del mezzo si ricalcola
+--    dall'ultima lettura rimasta: così è giusto anche quando una lettura
+--    si sposta indietro nel tempo o si cancella.
+-- SECURITY DEFINER sul ricalcolo perché un volontario, che sui mezzi non
+-- ha scrittura, deve comunque poter aggiornare il km. Tocca solo il mezzo
+-- della lettura, nello stesso tenant.
 create or replace function fleetcare.check_odometer_reading() returns trigger
-  language plpgsql security definer set search_path = fleetcare, public as
+  language plpgsql as
 $$
 declare
   v_before int;
@@ -137,20 +147,42 @@ begin
     raise exception 'Lettura di % km superiore a una successiva (% km)', new.km, v_after
       using errcode = 'check_violation';
   end if;
-
-  update fleetcare.vehicles
-     set odometer_km = new.km, odometer_updated_at = new.read_at
-   where id = new.vehicle_id
-     and tenant_id = new.tenant_id
-     and (odometer_updated_at is null or odometer_updated_at <= new.read_at);
-
   return new;
+end
+$$;
+
+create or replace function fleetcare.refresh_vehicle_odometer() returns trigger
+  language plpgsql security definer set search_path = fleetcare, public as
+$$
+declare
+  v_vehicle uuid;
+  v_tenant uuid;
+begin
+  for v_vehicle, v_tenant in
+    select distinct x.vehicle_id, x.tenant_id from (
+      select new.vehicle_id, new.tenant_id where tg_op <> 'DELETE'
+      union all
+      select old.vehicle_id, old.tenant_id where tg_op <> 'INSERT'
+    ) x (vehicle_id, tenant_id)
+  loop
+    -- senza letture resta il valore dell'anagrafica (km all'ingresso in flotta)
+    update fleetcare.vehicles v
+       set odometer_km = r.km, odometer_updated_at = r.read_at
+      from (select km, read_at from fleetcare.odometer_readings
+             where vehicle_id = v_vehicle
+             order by read_at desc, km desc limit 1) r
+     where v.id = v_vehicle and v.tenant_id = v_tenant;
+  end loop;
+  return null;
 end
 $$;
 
 create trigger trg_odometer_check before insert or update of km, read_at, vehicle_id
   on fleetcare.odometer_readings
   for each row execute function fleetcare.check_odometer_reading();
+create trigger trg_odometer_refresh after insert or update or delete
+  on fleetcare.odometer_readings
+  for each row execute function fleetcare.refresh_vehicle_odometer();
 
 -- ---------- login: trovare l'utenza prima che esista un contesto tenant ----------
 -- Unica porta che attraversa la RLS: restituisce solo ciò che serve ad
@@ -160,13 +192,76 @@ create or replace function fleetcare.auth_find_profile(p_tenant_slug text, p_ema
                  password_hash text, active boolean)
   language sql stable security definer set search_path = fleetcare, public as
 $$
-  select p.id, p.tenant_id, p.role, p.full_name, p.password_hash, p.active
-    from fleetcare.profiles p
+  select p.id, p.tenant_id, p.role, p.full_name, a.password_hash, p.active
+    from fleetcare.profile_accounts a
+    join fleetcare.profiles p on p.id = a.profile_id
     join fleetcare.tenants t on t.id = p.tenant_id
-   where t.slug = p_tenant_slug and lower(p.email) = lower(p_email)
+   where t.slug = p_tenant_slug and lower(a.email) = lower(p_email)
 $$;
 revoke all on function fleetcare.auth_find_profile(text, text) from public;
 grant execute on function fleetcare.auth_find_profile(text, text) to fleetcare_app;
+
+-- ---------- eliminare dagli scadenzari senza perdere lo storico ----------
+-- Ogni associazione sceglie, aggiunge, modifica ed elimina le proprie
+-- scadenze. L'unico limite: ciò che ha adempimenti registrati (una
+-- revisione fatta, un certificato) è documentazione, e invece di sparire
+-- si archivia. Il chiamante sa sempre cosa è successo dal valore di
+-- ritorno: 'deleted' oppure 'archived'.
+-- SECURITY INVOKER (il default): valgono le policy di chi chiama, quindi
+-- un volontario non elimina niente.
+
+create or replace function fleetcare.remove_deadline(p_id uuid) returns text
+  language plpgsql as
+$$
+begin
+  if exists (select 1 from fleetcare.deadline_completions where deadline_id = p_id) then
+    update fleetcare.deadlines set archived_at = now()
+     where id = p_id and archived_at is null;
+    if not found and not exists (select 1 from fleetcare.deadlines
+                                  where id = p_id and archived_at is not null) then
+      raise exception 'Scadenza % non trovata o non modificabile', p_id using errcode = 'no_data_found';
+    end if;
+    return 'archived';
+  end if;
+  delete from fleetcare.deadlines where id = p_id;
+  if not found then
+    raise exception 'Scadenza % non trovata o non modificabile', p_id using errcode = 'no_data_found';
+  end if;
+  return 'deleted';
+end
+$$;
+
+-- Un tipo di scadenza usato da scadenze con storico si archiviano insieme
+-- (il tipo e tutte le sue scadenze); altrimenti si cancella tutto: le
+-- scadenze senza storico, le regole (in cascata) e il tipo.
+create or replace function fleetcare.remove_deadline_type(p_id uuid) returns text
+  language plpgsql as
+$$
+begin
+  if not exists (select 1 from fleetcare.deadline_types where id = p_id) then
+    raise exception 'Tipo di scadenza % non trovato', p_id using errcode = 'no_data_found';
+  end if;
+  if exists (select 1 from fleetcare.deadline_completions c
+               join fleetcare.deadlines d on d.id = c.deadline_id
+              where d.deadline_type_id = p_id) then
+    update fleetcare.deadlines set archived_at = now()
+     where deadline_type_id = p_id and archived_at is null;
+    update fleetcare.deadline_types set archived_at = now()
+     where id = p_id and archived_at is null;
+    if not found and not exists (select 1 from fleetcare.deadline_types
+                                  where id = p_id and archived_at is not null) then
+      raise exception 'Tipo di scadenza % non modificabile', p_id using errcode = 'insufficient_privilege';
+    end if;
+    return 'archived';
+  end if;
+  delete from fleetcare.deadlines where deadline_type_id = p_id;
+  delete from fleetcare.deadline_types where id = p_id;
+  if not found then
+    raise exception 'Tipo di scadenza % non modificabile', p_id using errcode = 'insufficient_privilege';
+  end if;
+  return 'deleted';
+end
+$$;
 
 -- ============================================================
 -- RLS
@@ -233,7 +328,7 @@ declare
 begin
   -- 2a. anagrafiche e operativo del parco: tutti leggono, scrive il responsabile mezzi
   foreach t in array array[
-    'sites', 'crew_members', 'suppliers', 'vehicles', 'vehicle_downtimes',
+    'sites', 'suppliers', 'vehicles', 'vehicle_downtimes',
     'checklist_templates', 'checklist_template_items'
   ] loop
     foreach c in array array['insert', 'update', 'delete'] loop
@@ -296,7 +391,86 @@ begin
 end
 $$;
 
--- 2h. notifiche: ognuno vede e segna come lette solo le proprie
+-- 2h. ognuno registra solo a proprio nome. I volontari usano i propri
+-- dispositivi: senza questo vincolo chiunque potrebbe firmare una
+-- check-list o un rifornimento per un altro. I responsabili possono
+-- invece registrare per conto di qualcuno (il buono di carta portato in
+-- sede da chi non ha usato l'app).
+do $$
+declare
+  r record;
+begin
+  for r in
+    select * from (values
+      ('fault_reports', 'reported_by_id'),
+      ('fuel_logs', 'recorded_by_id'),
+      ('odometer_readings', 'recorded_by_id'),
+      ('checklists', 'performed_by_id'),
+      ('sanitizations', 'performed_by_id'),
+      ('attachments', 'uploaded_by_id')
+    ) v (tbl, col)
+  loop
+    execute format(
+      'create policy %1$s_insert_self on fleetcare.%1$I as restrictive
+       for insert to fleetcare_app
+       with check (not fleetcare.app_has_role(''crew'') or %2$I = fleetcare.app_user_id())',
+      r.tbl, r.col);
+  end loop;
+end
+$$;
+
+-- le risposte di una check-list le scrive chi l'ha compilata
+create policy checklist_answers_insert_self on fleetcare.checklist_answers as restrictive
+  for insert to fleetcare_app
+  with check (
+    not fleetcare.app_has_role('crew')
+    or exists (select 1 from fleetcare.checklists c
+                where c.id = checklist_id and c.performed_by_id = fleetcare.app_user_id())
+  );
+
+-- 2i. commenti alle segnalazioni: l'equipaggio non vede né scrive le note
+-- interne; ognuno scrive a proprio nome; non si modificano, li cancella
+-- solo la direzione
+create policy fault_report_comments_select_role on fleetcare.fault_report_comments as restrictive
+  for select to fleetcare_app
+  using (not internal or not fleetcare.app_has_role('crew'));
+create policy fault_report_comments_insert_self on fleetcare.fault_report_comments as restrictive
+  for insert to fleetcare_app
+  with check (author_id = fleetcare.app_user_id()
+              and (not internal or not fleetcare.app_has_role('crew')));
+create policy fault_report_comments_update_role on fleetcare.fault_report_comments as restrictive
+  for update to fleetcare_app using (false);
+create policy fault_report_comments_delete_role on fleetcare.fault_report_comments as restrictive
+  for delete to fleetcare_app using (fleetcare.app_has_role('admin'));
+
+-- 2j. recapiti e credenziali: ognuno i propri, la direzione tutti
+create policy profile_accounts_select_role on fleetcare.profile_accounts as restrictive
+  for select to fleetcare_app
+  using (profile_id = fleetcare.app_user_id() or fleetcare.app_has_role('admin'));
+create policy profile_accounts_update_role on fleetcare.profile_accounts as restrictive
+  for update to fleetcare_app
+  using (profile_id = fleetcare.app_user_id() or fleetcare.app_has_role('admin'))
+  with check (profile_id = fleetcare.app_user_id() or fleetcare.app_has_role('admin'));
+create policy profile_accounts_insert_role on fleetcare.profile_accounts as restrictive
+  for insert to fleetcare_app with check (fleetcare.app_has_role('admin'));
+create policy profile_accounts_delete_role on fleetcare.profile_accounts as restrictive
+  for delete to fleetcare_app using (fleetcare.app_has_role('admin'));
+
+-- 2k. iscrizioni push: ognuno registra e cancella i propri dispositivi;
+-- i responsabili le leggono per mandare l'avviso a chi ha segnalato
+create policy push_subscriptions_select_role on fleetcare.push_subscriptions as restrictive
+  for select to fleetcare_app
+  using (profile_id = fleetcare.app_user_id() or not fleetcare.app_has_role('crew'));
+create policy push_subscriptions_insert_self on fleetcare.push_subscriptions as restrictive
+  for insert to fleetcare_app with check (profile_id = fleetcare.app_user_id());
+create policy push_subscriptions_update_self on fleetcare.push_subscriptions as restrictive
+  for update to fleetcare_app
+  using (profile_id = fleetcare.app_user_id()) with check (profile_id = fleetcare.app_user_id());
+create policy push_subscriptions_delete_role on fleetcare.push_subscriptions as restrictive
+  for delete to fleetcare_app
+  using (profile_id = fleetcare.app_user_id() or not fleetcare.app_has_role('crew'));
+
+-- 2l. notifiche: ognuno vede e segna come lette solo le proprie
 create policy notifications_select_own on fleetcare.notifications as restrictive
   for select to fleetcare_app using (recipient_id = fleetcare.app_user_id());
 create policy notifications_update_own on fleetcare.notifications as restrictive

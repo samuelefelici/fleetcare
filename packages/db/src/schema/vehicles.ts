@@ -12,7 +12,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { fleetcareSchema } from "./_schema";
-import { crewMembers, profiles, sites, tenants } from "./core";
+import { profiles, sites, tenants } from "./core";
 import {
   en1789Type,
   fuelType,
@@ -120,11 +120,12 @@ export const vehicles = fleetcareSchema.table(
     odometerKm: integer("odometer_km").notNull().default(0),
     odometerUpdatedAt: timestamp("odometer_updated_at", { withTimezone: true }),
     /**
-     * Come il distributore riconosce il mezzo, se non dalla targa
-     * (tessera, codice cliente per mezzo). Serve all'abbinamento delle
-     * righe di fattura con i rifornimenti.
+     * La **matricola** con cui il distributore identifica il mezzo nel
+     * riepilogo della fattura, quando è diversa dal numero interno. Se il
+     * distributore usa il numero interno, resta vuota: l'abbinamento prova
+     * prima questa, poi il numero interno, poi la targa.
      */
-    fuelCardCode: text("fuel_card_code"),
+    fuelVehicleCode: text("fuel_vehicle_code"),
 
     // --- fine vita ---
     decommissionedOn: date("decommissioned_on"),
@@ -161,8 +162,10 @@ export const odometerReadings = fleetcareSchema.table(
     km: integer("km").notNull(),
     source: odometerSource("source").notNull().default("manual"),
     readAt: timestamp("read_at", { withTimezone: true }).notNull().defaultNow(),
-    crewMemberId: uuid("crew_member_id").references(() => crewMembers.id),
-    createdById: uuid("created_by_id").references(() => profiles.id),
+    /** chi ha letto il contachilometri (un volontario registra solo a proprio nome) */
+    recordedById: uuid("recorded_by_id")
+      .notNull()
+      .references(() => profiles.id),
   },
   (t) => [
     index("odometer_vehicle_idx").on(t.tenantId, t.vehicleId, t.readAt),

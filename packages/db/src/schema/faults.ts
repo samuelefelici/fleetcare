@@ -1,6 +1,6 @@
 import { boolean, index, integer, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { fleetcareSchema } from "./_schema";
-import { crewMembers, profiles, tenants } from "./core";
+import { profiles, tenants } from "./core";
 import { faultArea, faultSeverity, faultStatus } from "./enums";
 import { equipment } from "./equipment";
 import { maintenanceJobs } from "./maintenance";
@@ -33,8 +33,10 @@ export const faultReports = fleetcareSchema.table(
     status: faultStatus("status").notNull().default("open"),
     /** «il mezzo non è sicuro»: avviso immediato al responsabile, il mezzo va verificato prima di uscire */
     unsafe: boolean("unsafe").notNull().default(false),
-    crewMemberId: uuid("crew_member_id").references(() => crewMembers.id),
-    reportedById: uuid("reported_by_id").references(() => profiles.id),
+    /** chi ha segnalato, dall'app sul proprio dispositivo (mai a nome di un altro) */
+    reportedById: uuid("reported_by_id")
+      .notNull()
+      .references(() => profiles.id),
     odometerKm: integer("odometer_km"),
     maintenanceJobId: uuid("maintenance_job_id").references(() => maintenanceJobs.id),
     acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
@@ -50,4 +52,31 @@ export const faultReports = fleetcareSchema.table(
     index("fault_reports_vehicle_idx").on(t.tenantId, t.vehicleId, t.status),
     index("fault_reports_created_idx").on(t.tenantId, t.createdAt),
   ],
+);
+
+/**
+ * Il filo di messaggi di una segnalazione: il responsabile chiede «mi
+ * mandi una foto della spia?», il volontario risponde dall'app. È ciò che
+ * fa tornare a segnalare: chi segnala e non sente più niente smette.
+ *
+ * `internal` = nota fra responsabili, che l'equipaggio non vede (RLS).
+ */
+export const faultReportComments = fleetcareSchema.table(
+  "fault_report_comments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    faultReportId: uuid("fault_report_id")
+      .notNull()
+      .references(() => faultReports.id, { onDelete: "cascade" }),
+    authorId: uuid("author_id")
+      .notNull()
+      .references(() => profiles.id),
+    body: text("body").notNull(),
+    internal: boolean("internal").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("fault_report_comments_report_idx").on(t.tenantId, t.faultReportId, t.createdAt)],
 );
