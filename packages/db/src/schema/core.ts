@@ -10,7 +10,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { fleetcareSchema } from "./_schema";
+import { fleetcareSchema, tenantFk, tenantKey } from "./_schema";
 import { attachmentEntity, notificationKind, profileRole, supplierKind } from "./enums";
 
 /**
@@ -35,6 +35,12 @@ export const tenants = fleetcareSchema.table("tenants", {
   pec: text("pec"),
   email: text("email"),
   phone: text("phone"),
+  /**
+   * Quando il seed ha scritto il catalogo iniziale. Il catalogo si scrive
+   * una volta sola, alla nascita dell'associazione: un secondo seed non
+   * deve far risorgere tipi e regole che l'associazione ha eliminato.
+   */
+  catalogSeededAt: timestamp("catalog_seeded_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -67,16 +73,18 @@ export const profiles = fleetcareSchema.table(
     badgeNumber: text("badge_number"), // n. tessera / matricola del volontario
     /** abilitato alla guida dei mezzi dell'associazione */
     isDriver: boolean("is_driver").notNull().default(false),
-    siteId: uuid("site_id").references(() => sites.id),
+    siteId: uuid("site_id"),
     active: boolean("active").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    tenantKey("profiles", t),
     index("profiles_tenant_name_idx").on(t.tenantId, t.fullName),
     uniqueIndex("profiles_tenant_badge_uq")
       .on(t.tenantId, t.badgeNumber)
       .where(sql`${t.badgeNumber} is not null`),
+    tenantFk("profiles_site_id_fk", t.tenantId, t.siteId, sites),
   ],
 );
 
@@ -92,9 +100,7 @@ export const profiles = fleetcareSchema.table(
 export const profileAccounts = fleetcareSchema.table(
   "profile_accounts",
   {
-    profileId: uuid("profile_id")
-      .primaryKey()
-      .references(() => profiles.id, { onDelete: "cascade" }),
+    profileId: uuid("profile_id").primaryKey(),
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
@@ -106,7 +112,10 @@ export const profileAccounts = fleetcareSchema.table(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("profile_accounts_tenant_email_uq").on(t.tenantId, sql`lower(${t.email})`)],
+  (t) => [
+    uniqueIndex("profile_accounts_tenant_email_uq").on(t.tenantId, sql`lower(${t.email})`),
+    tenantFk("profile_accounts_profile_id_fk", t.tenantId, t.profileId, profiles, "cascade"),
+  ],
 );
 
 /**
@@ -122,17 +131,20 @@ export const pushSubscriptions = fleetcareSchema.table(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
-    profileId: uuid("profile_id")
-      .notNull()
-      .references(() => profiles.id, { onDelete: "cascade" }),
-    endpoint: text("endpoint").notNull().unique(),
+    profileId: uuid("profile_id").notNull(),
+    endpoint: text("endpoint").notNull(),
     p256dh: text("p256dh").notNull(),
     auth: text("auth").notNull(),
     userAgent: text("user_agent"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
   },
-  (t) => [index("push_subscriptions_profile_idx").on(t.tenantId, t.profileId)],
+  (t) => [
+    index("push_subscriptions_profile_idx").on(t.tenantId, t.profileId),
+    /* lo stesso browser può servire due persone (chi esce e chi entra): unico per persona */
+    uniqueIndex("push_subscriptions_profile_endpoint_uq").on(t.profileId, t.endpoint),
+    tenantFk("push_subscriptions_profile_id_fk", t.tenantId, t.profileId, profiles, "cascade"),
+  ],
 );
 
 /** Sedi e postazioni: dove stanno i mezzi e dove si tiene la scorta di materiale. */
@@ -151,7 +163,7 @@ export const sites = fleetcareSchema.table(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("sites_tenant_name_uq").on(t.tenantId, t.name)],
+  (t) => [tenantKey("sites", t), uniqueIndex("sites_tenant_name_uq").on(t.tenantId, t.name)],
 );
 
 /**
@@ -189,6 +201,7 @@ export const suppliers = fleetcareSchema.table(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    tenantKey("suppliers", t),
     index("suppliers_tenant_name_idx").on(t.tenantId, t.name),
     uniqueIndex("suppliers_tenant_vat_uq")
       .on(t.tenantId, t.vatNumber)
@@ -220,14 +233,13 @@ export const attachments = fleetcareSchema.table(
     mimeType: text("mime_type").notNull(),
     sizeBytes: integer("size_bytes").notNull(),
     storagePath: text("storage_path").notNull(),
-    uploadedById: uuid("uploaded_by_id")
-      .notNull()
-      .references(() => profiles.id),
+    uploadedById: uuid("uploaded_by_id").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("attachments_entity_idx").on(t.tenantId, t.entityType, t.entityId),
     check("attachments_size_ck", sql`${t.sizeBytes} >= 0`),
+    tenantFk("attachments_uploaded_by_id_fk", t.tenantId, t.uploadedById, profiles),
   ],
 );
 
@@ -239,9 +251,7 @@ export const notifications = fleetcareSchema.table(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
-    recipientId: uuid("recipient_id")
-      .notNull()
-      .references(() => profiles.id),
+    recipientId: uuid("recipient_id").notNull(),
     kind: notificationKind("kind").notNull().default("generic"),
     title: text("title").notNull(),
     body: text("body"),
@@ -249,7 +259,10 @@ export const notifications = fleetcareSchema.table(
     readAt: timestamp("read_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("notifications_recipient_idx").on(t.tenantId, t.recipientId, t.readAt)],
+  (t) => [
+    index("notifications_recipient_idx").on(t.tenantId, t.recipientId, t.readAt),
+    tenantFk("notifications_recipient_id_fk", t.tenantId, t.recipientId, profiles),
+  ],
 );
 
 /** Audit log: alimentato solo da trigger (migration 0001), mai scritto dall'app. */

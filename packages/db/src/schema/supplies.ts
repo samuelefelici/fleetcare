@@ -10,7 +10,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { fleetcareSchema } from "./_schema";
+import { fleetcareSchema, tenantFk, tenantKey } from "./_schema";
 import { sites, tenants } from "./core";
 import { vehicleCategory } from "./enums";
 import { equipmentTypes } from "./equipment";
@@ -38,7 +38,10 @@ export const supplyItems = fleetcareSchema.table(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("supply_items_tenant_code_uq").on(t.tenantId, t.code)],
+  (t) => [
+    tenantKey("supply_items", t),
+    uniqueIndex("supply_items_tenant_code_uq").on(t.tenantId, t.code),
+  ],
 );
 
 /**
@@ -55,11 +58,9 @@ export const supplyLots = fleetcareSchema.table(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
-    supplyItemId: uuid("supply_item_id")
-      .notNull()
-      .references(() => supplyItems.id),
-    vehicleId: uuid("vehicle_id").references(() => vehicles.id, { onDelete: "cascade" }),
-    siteId: uuid("site_id").references(() => sites.id),
+    supplyItemId: uuid("supply_item_id").notNull(),
+    vehicleId: uuid("vehicle_id"),
+    siteId: uuid("site_id"),
     lotNumber: text("lot_number"),
     expiresOn: date("expires_on"),
     quantity: numeric("quantity", { precision: 10, scale: 2 }).notNull(),
@@ -73,6 +74,9 @@ export const supplyLots = fleetcareSchema.table(
     index("supply_lots_vehicle_idx").on(t.tenantId, t.vehicleId),
     check("supply_lots_place_ck", sql`(${t.vehicleId} is not null) <> (${t.siteId} is not null)`),
     check("supply_lots_qty_ck", sql`${t.quantity} >= 0`),
+    tenantFk("supply_lots_supply_item_id_fk", t.tenantId, t.supplyItemId, supplyItems),
+    tenantFk("supply_lots_vehicle_id_fk", t.tenantId, t.vehicleId, vehicles, "cascade"),
+    tenantFk("supply_lots_site_id_fk", t.tenantId, t.siteId, sites),
   ],
 );
 
@@ -92,10 +96,8 @@ export const kitRequirements = fleetcareSchema.table(
       .notNull()
       .references(() => tenants.id),
     vehicleCategory: vehicleCategory("vehicle_category").notNull(),
-    equipmentTypeId: uuid("equipment_type_id").references(() => equipmentTypes.id, {
-      onDelete: "cascade",
-    }),
-    supplyItemId: uuid("supply_item_id").references(() => supplyItems.id, { onDelete: "cascade" }),
+    equipmentTypeId: uuid("equipment_type_id"),
+    supplyItemId: uuid("supply_item_id"),
     minQuantity: numeric("min_quantity", { precision: 10, scale: 2 }).notNull().default("1"),
     notes: text("notes"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -110,6 +112,20 @@ export const kitRequirements = fleetcareSchema.table(
     check(
       "kit_requirements_target_ck",
       sql`(${t.equipmentTypeId} is not null) <> (${t.supplyItemId} is not null)`,
+    ),
+    tenantFk(
+      "kit_requirements_equipment_type_id_fk",
+      t.tenantId,
+      t.equipmentTypeId,
+      equipmentTypes,
+      "cascade",
+    ),
+    tenantFk(
+      "kit_requirements_supply_item_id_fk",
+      t.tenantId,
+      t.supplyItemId,
+      supplyItems,
+      "cascade",
     ),
   ],
 );

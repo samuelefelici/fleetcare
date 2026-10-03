@@ -45,6 +45,9 @@ export interface DeadlineTypeSeed {
   intervalDays?: number;
   intervalKm?: number;
   monthEnd?: boolean;
+  renewFromDue?: boolean;
+  isVehicleTax?: boolean;
+  completedByCrew?: boolean;
   alertDays: number;
   alertKm?: number;
   blocking: boolean;
@@ -60,7 +63,7 @@ export const DEADLINE_TYPES: DeadlineTypeSeed[] = [
     reference:
       "CdS art. 80: annuale per le autoambulanze; per autovetture e autocarri fino a 3,5 t la prima a 4 anni dall'immatricolazione, poi ogni 2",
     description:
-      "Scade a fine mese. La periodicità effettiva dipende da come il mezzo è immatricolato: verificarla sulla carta di circolazione.",
+      "Scade a fine mese. Annuale anche per i mezzi con più di 9 posti o oltre 3,5 t: per questo pulmini e mezzi di protezione civile nascono annuali, e si portano a 24 mesi solo i mezzi che lo consentono (carta di circolazione).",
     intervalMonths: 12,
     monthEnd: true,
     alertDays: 60,
@@ -73,8 +76,9 @@ export const DEADLINE_TYPES: DeadlineTypeSeed[] = [
     subject: "vehicle",
     reference: "CdS art. 193",
     description:
-      "Con una polizza a libro matricola la scadenza è la stessa per tutti i mezzi: il rinnovo si registra su ciascuno, con la sua quota di premio.",
+      "Con una polizza a libro matricola la scadenza è la stessa per tutti i mezzi: il rinnovo si registra su ciascuno, con la sua quota di premio. Si rinnova dall'anniversario, non dal giorno del pagamento.",
     intervalMonths: 12,
+    renewFromDue: true,
     alertDays: 30,
     blocking: true,
     documentRequired: true,
@@ -84,9 +88,11 @@ export const DEADLINE_TYPES: DeadlineTypeSeed[] = [
     label: "Tassa automobilistica",
     subject: "vehicle",
     reference: "Tassa regionale; molti mezzi sanitari e per disabili di ETS sono esenti",
-    description: "Non nasce per i mezzi con «esente bollo».",
+    description: "Non nasce per i mezzi con «esente bollo». Si rinnova dalla scadenza precedente.",
     intervalMonths: 12,
     monthEnd: true,
+    renewFromDue: true,
+    isVehicleTax: true,
     alertDays: 30,
     blocking: false,
     documentRequired: false,
@@ -121,8 +127,10 @@ export const DEADLINE_TYPES: DeadlineTypeSeed[] = [
     label: "Sanificazione periodica approfondita",
     subject: "vehicle",
     reference: "Protocollo di sanificazione dell'associazione",
-    description: "Si chiude registrando una sanificazione di tipo «periodica».",
+    description:
+      "La registra l'equipaggio che ha sanificato: l'adempimento si collega alla sanificazione «periodica».",
     intervalDays: 30,
+    completedByCrew: true,
     alertDays: 5,
     blocking: false,
     documentRequired: false,
@@ -264,7 +272,9 @@ export const EQUIPMENT_TYPES: EquipmentTypeSeed[] = [
     code: "saturimetro",
     label: "Saturimetro",
     group: "electromedical",
-    electromedical: true,
+    // a batteria, senza parti collegate alla rete: niente verifica elettrica,
+    // il controllo è quello funzionale della check-list
+    electromedical: false,
     missionCritical: false,
   },
   {
@@ -365,6 +375,7 @@ export interface DeadlineRuleSeed {
   intervalDays?: number;
   intervalKm?: number;
   alertDays?: number;
+  alertKm?: number;
   blocking?: boolean;
 }
 
@@ -387,17 +398,15 @@ const lifeSupportDevice = (code: string) =>
   ]);
 
 export const DEADLINE_RULES: DeadlineRuleSeed[] = [
-  // revisione: annuale per le ambulanze, 4+2 anni per i mezzi immatricolati come autovetture
-  ...forCategories("revisione", ["emergency_ambulance", "transport_ambulance"], {
-    intervalMonths: 12,
-  }),
+  // revisione: annuale per le ambulanze e — dalla parte sicura — per pulmini e
+  // protezione civile, che spesso superano 9 posti o 3,5 t; 24 mesi per le
+  // autovetture (automedica, auto di servizio), dopo la prima a 4 anni
   ...forCategories(
     "revisione",
-    ["medical_car", "disabled_transport", "service_car", "civil_protection"],
-    {
-      intervalMonths: 24,
-    },
+    ["emergency_ambulance", "transport_ambulance", "disabled_transport", "civil_protection"],
+    { intervalMonths: 12 },
   ),
+  ...forCategories("revisione", ["medical_car", "service_car"], { intervalMonths: 24 }),
   ...forCategories("rca", ALL_CATEGORIES),
   ...forCategories("bollo", ALL_CATEGORIES),
   ...forCategories("tagliando", ALL_CATEGORIES),
@@ -714,50 +723,69 @@ const EXTINGUISHER: ChecklistItemSeed = {
   equipmentType: "estintore_polvere",
 };
 
+/** Vano sanitario: uguale per le due ambulanze */
+const AMBULANCE_COMPARTMENT: ChecklistItemSeed[] = [
+  { section: "Vano sanitario", label: "Vano pulito e sanificato" },
+  { section: "Vano sanitario", label: "Illuminazione, prese e climatizzazione funzionanti" },
+  {
+    section: "Vano sanitario",
+    label: "Barella autocaricante: ganci di ancoraggio e cinghie integri",
+    safetyCritical: true,
+    equipmentType: "barella_autocaricante",
+  },
+  {
+    section: "Vano sanitario",
+    label: "Sedia portantina presente e integra",
+    equipmentType: "sedia_portantina",
+  },
+];
+
+const AMBULANCE_OXYGEN: ChecklistItemSeed[] = [
+  {
+    section: "Ossigeno",
+    label: "Pressione bombola O2 fissa",
+    kind: "number",
+    unit: "bar",
+    minValue: 50,
+    safetyCritical: true,
+    equipmentType: "bombola_o2_fissa",
+  },
+  {
+    section: "Ossigeno",
+    label: "Pressione bombola O2 portatile",
+    kind: "number",
+    unit: "bar",
+    minValue: 50,
+    safetyCritical: true,
+    equipmentType: "bombola_o2_portatile",
+  },
+  {
+    section: "Ossigeno",
+    label: "Riduttori e flussimetri funzionanti, nessuna perdita",
+    safetyCritical: true,
+    equipmentType: "riduttore_o2",
+  },
+];
+
+const CREW_SAFETY: ChecklistItemSeed[] = [
+  {
+    section: "Zaino e consumabili",
+    label: "Guanti e DPI per l'equipaggio",
+    supplyItem: "guanti_nitrile",
+  },
+  EXTINGUISHER,
+  { section: "Sicurezza", label: "Giubbini ad alta visibilità per l'equipaggio" },
+];
+
 export const CHECKLIST_TEMPLATES: ChecklistTemplateSeed[] = [
   {
-    name: "Controllo ambulanza",
-    vehicleCategories: ["emergency_ambulance", "transport_ambulance"],
+    name: "Controllo ambulanza di soccorso",
+    vehicleCategories: ["emergency_ambulance"],
     items: [
       ...VEHICLE_ROUND,
       ...PRIORITY_LIGHTS,
-      { section: "Vano sanitario", label: "Vano pulito e sanificato" },
-      { section: "Vano sanitario", label: "Illuminazione, prese e climatizzazione funzionanti" },
-      {
-        section: "Vano sanitario",
-        label: "Barella autocaricante: ganci di ancoraggio e cinghie integri",
-        safetyCritical: true,
-        equipmentType: "barella_autocaricante",
-      },
-      {
-        section: "Vano sanitario",
-        label: "Sedia portantina presente e integra",
-        equipmentType: "sedia_portantina",
-      },
-      {
-        section: "Ossigeno",
-        label: "Pressione bombola O2 fissa",
-        kind: "number",
-        unit: "bar",
-        minValue: 50,
-        safetyCritical: true,
-        equipmentType: "bombola_o2_fissa",
-      },
-      {
-        section: "Ossigeno",
-        label: "Pressione bombola O2 portatile",
-        kind: "number",
-        unit: "bar",
-        minValue: 50,
-        safetyCritical: true,
-        equipmentType: "bombola_o2_portatile",
-      },
-      {
-        section: "Ossigeno",
-        label: "Riduttori e flussimetri funzionanti, nessuna perdita",
-        safetyCritical: true,
-        equipmentType: "riduttore_o2",
-      },
+      ...AMBULANCE_COMPARTMENT,
+      ...AMBULANCE_OXYGEN,
       {
         section: "Elettromedicali",
         label: "DAE: autotest superato, batteria carica",
@@ -792,15 +820,26 @@ export const CHECKLIST_TEMPLATES: ChecklistTemplateSeed[] = [
         equipmentType: "materasso_depressione",
       },
       { section: "Immobilizzazione", label: "Estricatore (KED)", equipmentType: "ked" },
+      {
+        section: "Immobilizzazione",
+        label: "Barella a cucchiaio",
+        equipmentType: "barella_cucchiaio",
+      },
       { section: "Immobilizzazione", label: "Collari cervicali", supplyItem: "collari_cervicali" },
       { section: "Zaino e consumabili", label: "Zaino di soccorso completo e sigillato" },
-      {
-        section: "Zaino e consumabili",
-        label: "Guanti e DPI per l'equipaggio",
-        supplyItem: "guanti_nitrile",
-      },
-      EXTINGUISHER,
-      { section: "Sicurezza", label: "Giubbini ad alta visibilità per l'equipaggio" },
+      ...CREW_SAFETY,
+    ],
+  },
+  {
+    // solo ciò che un'ambulanza di trasporto ha in dotazione (kit_requirements)
+    name: "Controllo ambulanza di trasporto",
+    vehicleCategories: ["transport_ambulance"],
+    items: [
+      ...VEHICLE_ROUND,
+      ...PRIORITY_LIGHTS,
+      ...AMBULANCE_COMPARTMENT,
+      ...AMBULANCE_OXYGEN,
+      ...CREW_SAFETY,
     ],
   },
   {

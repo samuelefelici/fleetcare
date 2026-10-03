@@ -1,7 +1,11 @@
 /**
  * Seed: crea l'associazione (se non c'è), la sede principale e il catalogo
- * iniziale. Idempotente: si può rilanciare, non duplica e non sovrascrive
- * ciò che è stato modificato dall'applicazione.
+ * iniziale.
+ *
+ * Il catalogo si scrive **una volta sola**, alla nascita dell'associazione
+ * (`tenants.catalog_seeded_at`). Da lì è dell'associazione: un secondo seed
+ * non lo tocca, e in particolare non fa risorgere tipi, regole o dotazioni
+ * che l'associazione ha eliminato. Rilanciarlo è sicuro: non fa niente.
  *
  * Gira con il ruolo owner (DATABASE_ADMIN_URL), quindi fuori dalla RLS.
  * Non crea mezzi né utenti: il parco vero si carica dai dati reali.
@@ -48,11 +52,19 @@ try {
       .insert(schema.tenants)
       .values({ name, slug, network: "ANPAS", city: "Camerano", province: "AN" })
       .onConflictDoNothing({ target: schema.tenants.slug });
+    // for update: due seed in parallelo non scrivono il catalogo due volte
     const [tenant] = await tx
-      .select({ id: schema.tenants.id })
+      .select({ id: schema.tenants.id, catalogSeededAt: schema.tenants.catalogSeededAt })
       .from(schema.tenants)
-      .where(eq(schema.tenants.slug, slug));
+      .where(eq(schema.tenants.slug, slug))
+      .for("update");
     if (!tenant) throw new Error("tenant non creato");
+    if (tenant.catalogSeededAt) {
+      console.log(
+        `«${name}»: catalogo già scritto il ${tenant.catalogSeededAt.toISOString()}, non lo riscrivo`,
+      );
+      return;
+    }
     const tenantId = tenant.id;
 
     await tx
@@ -60,34 +72,24 @@ try {
       .values({ tenantId, name: "Sede principale", isHeadquarters: true })
       .onConflictDoNothing();
 
-    // --- tipi di scadenza ---
-    await tx
-      .insert(schema.deadlineTypes)
-      .values(DEADLINE_TYPES.map((d, i) => ({ ...d, tenantId, sortOrder: i * 10 })))
-      .onConflictDoNothing();
+    // --- tipi di scadenza e di attrezzatura ---
     const deadlineTypeId = lookup(
       await tx
-        .select({ id: schema.deadlineTypes.id, code: schema.deadlineTypes.code })
-        .from(schema.deadlineTypes)
-        .where(eq(schema.deadlineTypes.tenantId, tenantId)),
+        .insert(schema.deadlineTypes)
+        .values(DEADLINE_TYPES.map((d, i) => ({ ...d, tenantId, sortOrder: i * 10 })))
+        .returning({ id: schema.deadlineTypes.id, code: schema.deadlineTypes.code }),
       "tipo di scadenza",
     );
-
-    // --- tipi di attrezzatura ---
-    await tx
-      .insert(schema.equipmentTypes)
-      .values(EQUIPMENT_TYPES.map((e, i) => ({ ...e, tenantId, sortOrder: i * 10 })))
-      .onConflictDoNothing();
     const equipmentTypeId = lookup(
       await tx
-        .select({ id: schema.equipmentTypes.id, code: schema.equipmentTypes.code })
-        .from(schema.equipmentTypes)
-        .where(eq(schema.equipmentTypes.tenantId, tenantId)),
+        .insert(schema.equipmentTypes)
+        .values(EQUIPMENT_TYPES.map((e, i) => ({ ...e, tenantId, sortOrder: i * 10 })))
+        .returning({ id: schema.equipmentTypes.id, code: schema.equipmentTypes.code }),
       "tipo di attrezzatura",
     );
 
     // --- regole ---
-    await tx
+    const rules = await tx
       .insert(schema.deadlineRules)
       .values(
         DEADLINE_RULES.map(({ deadlineType, equipmentType, ...rule }) => ({
@@ -97,41 +99,33 @@ try {
           equipmentTypeId: equipmentType ? equipmentTypeId(equipmentType) : null,
         })),
       )
-      .onConflictDoNothing();
+      .returning({ id: schema.deadlineRules.id });
 
     // --- materiale di consumo e dotazione minima ---
-    await tx
-      .insert(schema.supplyItems)
-      .values(SUPPLY_ITEMS.map((s) => ({ ...s, tenantId })))
-      .onConflictDoNothing();
     const supplyItemId = lookup(
       await tx
-        .select({ id: schema.supplyItems.id, code: schema.supplyItems.code })
-        .from(schema.supplyItems)
-        .where(eq(schema.supplyItems.tenantId, tenantId)),
+        .insert(schema.supplyItems)
+        .values(SUPPLY_ITEMS.map((s) => ({ ...s, tenantId })))
+        .returning({ id: schema.supplyItems.id, code: schema.supplyItems.code }),
       "articolo",
     );
-    await tx
-      .insert(schema.kitRequirements)
-      .values(
-        KIT_REQUIREMENTS.map((k) => ({
-          tenantId,
-          vehicleCategory: k.vehicleCategory,
-          equipmentTypeId: k.equipmentType ? equipmentTypeId(k.equipmentType) : null,
-          supplyItemId: k.supplyItem ? supplyItemId(k.supplyItem) : null,
-          minQuantity: String(k.minQuantity),
-        })),
-      )
-      .onConflictDoNothing();
+    await tx.insert(schema.kitRequirements).values(
+      KIT_REQUIREMENTS.map((k) => ({
+        tenantId,
+        vehicleCategory: k.vehicleCategory,
+        equipmentTypeId: k.equipmentType ? equipmentTypeId(k.equipmentType) : null,
+        supplyItemId: k.supplyItem ? supplyItemId(k.supplyItem) : null,
+        minQuantity: String(k.minQuantity),
+      })),
+    );
 
-    // --- check-list: le voci si scrivono solo per un modello appena creato ---
+    // --- check-list ---
     for (const template of CHECKLIST_TEMPLATES) {
       const [created] = await tx
         .insert(schema.checklistTemplates)
         .values({ tenantId, name: template.name, vehicleCategories: template.vehicleCategories })
-        .onConflictDoNothing()
         .returning({ id: schema.checklistTemplates.id });
-      if (!created) continue;
+      if (!created) throw new Error(`modello di check-list non creato: ${template.name}`);
       await tx.insert(schema.checklistTemplateItems).values(
         template.items.map((item, i) => ({
           tenantId,
@@ -149,13 +143,14 @@ try {
       );
     }
 
-    const templates = await tx
-      .select({ id: schema.checklistTemplates.id })
-      .from(schema.checklistTemplates)
-      .where(eq(schema.checklistTemplates.tenantId, tenantId));
+    await tx
+      .update(schema.tenants)
+      .set({ catalogSeededAt: new Date() })
+      .where(eq(schema.tenants.id, tenantId));
     console.log(
       `Seed «${name}»: ${DEADLINE_TYPES.length} tipi di scadenza, ${EQUIPMENT_TYPES.length} tipi di attrezzatura, ` +
-        `${DEADLINE_RULES.length} regole, ${SUPPLY_ITEMS.length} articoli, ${templates.length} check-list`,
+        `${rules.length} regole, ${SUPPLY_ITEMS.length} articoli, ${KIT_REQUIREMENTS.length} voci di dotazione, ` +
+        `${CHECKLIST_TEMPLATES.length} check-list`,
     );
   });
 } finally {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   addMonths,
   evaluateDeadline,
+  effectiveDeadline,
   nextDue,
   planDeadlines,
   resolveRule,
@@ -125,6 +126,19 @@ describe("semaphore", () => {
 });
 
 describe("resolveRule", () => {
+  it("anche il preavviso in km si eredita e si corregge", () => {
+    const base = {
+      intervalMonths: 12,
+      intervalDays: null,
+      intervalKm: 30_000,
+      alertDays: 30,
+      alertKm: null,
+      blocking: false,
+    };
+    expect(resolveRule(base, { alertKm: 1_500 }).alertKm).toBe(1_500);
+    expect(resolveRule({ ...base, alertKm: 2_000 }, {}).alertKm).toBe(2_000);
+  });
+
   const revisione = {
     intervalMonths: 12,
     intervalDays: null,
@@ -163,53 +177,59 @@ describe("planDeadlines", () => {
     alertKm: null,
     blocking: false,
     archived: false,
+    isVehicleTax: false,
     ...over,
   });
   const rule = (over: Partial<PlannableRule>): PlannableRule => ({
     deadlineTypeId: "t",
-    deadlineTypeCode: "t",
     vehicleCategory: null,
     equipmentTypeId: null,
     ownershipKinds: null,
     type: type(),
     ...over,
   });
-
-  const vehicleRules = [
-    rule({
-      deadlineTypeId: "rev",
-      deadlineTypeCode: "revisione",
-      vehicleCategory: "emergency_ambulance",
-    }),
-    rule({
-      deadlineTypeId: "bol",
-      deadlineTypeCode: "bollo",
-      vehicleCategory: "emergency_ambulance",
-    }),
-    rule({
-      deadlineTypeId: "rev",
-      deadlineTypeCode: "revisione",
-      vehicleCategory: "medical_car",
-      intervalMonths: 24,
-    }),
-  ];
-
-  it("prende le regole della categoria, con i valori risolti", () => {
-    const out = planDeadlines(
-      { kind: "vehicle", category: "medical_car", bolloExempt: false },
-      vehicleRules,
-    );
-    expect(out).toEqual([expect.objectContaining({ deadlineTypeId: "rev", intervalMonths: 24 })]);
+  const ambulance = (over: Partial<{ ownership: string; bolloExempt: boolean }> = {}) => ({
+    kind: "vehicle" as const,
+    category: "emergency_ambulance",
+    ownership: "owned",
+    bolloExempt: false,
+    ...over,
   });
 
-  it("un mezzo esente non riceve il bollo", () => {
+  const vehicleRules = [
+    rule({ deadlineTypeId: "rev", vehicleCategory: "emergency_ambulance" }),
+    rule({
+      deadlineTypeId: "bol",
+      vehicleCategory: "emergency_ambulance",
+      type: type({ isVehicleTax: true }),
+    }),
+    rule({
+      deadlineTypeId: "rca",
+      vehicleCategory: "emergency_ambulance",
+      ownershipKinds: ["owned"],
+    }),
+    rule({ deadlineTypeId: "rev", vehicleCategory: "medical_car", intervalMonths: 24 }),
+  ];
+
+  it("prende le regole della categoria, con i valori che erediterà", () => {
+    const out = planDeadlines({ ...ambulance(), category: "medical_car" }, vehicleRules);
+    expect(out).toEqual([
+      { deadlineTypeId: "rev", effective: expect.objectContaining({ intervalMonths: 24 }) },
+    ]);
+  });
+
+  it("un mezzo esente non riceve la tassa automobilistica (dal flag del tipo, non dal codice)", () => {
     const ids = (bolloExempt: boolean) =>
-      planDeadlines(
-        { kind: "vehicle", category: "emergency_ambulance", bolloExempt },
-        vehicleRules,
-      ).map((d) => d.deadlineTypeId);
-    expect(ids(false)).toEqual(["rev", "bol"]);
-    expect(ids(true)).toEqual(["rev"]);
+      planDeadlines(ambulance({ bolloExempt }), vehicleRules).map((d) => d.deadlineTypeId);
+    expect(ids(false)).toEqual(["rev", "bol", "rca"]);
+    expect(ids(true)).toEqual(["rev", "rca"]);
+  });
+
+  it("anche per i mezzi la proprietà decide: a noleggio niente RCA nostra", () => {
+    const ids = planDeadlines(ambulance({ ownership: "rented" }), vehicleRules).map(
+      (d) => d.deadlineTypeId,
+    );
+    expect(ids).toEqual(["rev", "bol"]);
   });
 
   it("la proprietà decide: il collaudo nasce solo per le bombole dell'associazione", () => {
@@ -230,5 +250,80 @@ describe("planDeadlines", () => {
     expect(
       planDeadlines({ kind: "equipment", equipmentTypeId: "dae", ownership: "owned" }, rules),
     ).toEqual([]);
+  });
+});
+
+describe("date non valide", () => {
+  it("rifiuta date impossibili invece di spostarle in silenzio", () => {
+    expect(() => addMonths("2026-02-30", 1)).toThrow();
+    expect(() => addMonths("2026-04-31", 1)).toThrow();
+    expect(() => addMonths("2026-13-01", 1)).toThrow();
+    expect(() => nextDue("2025-02-29", null, { months: 12 })).toThrow();
+  });
+  it("accetta il 29 febbraio degli anni bisestili", () => {
+    expect(addMonths("2028-02-29", 12)).toBe("2029-02-28");
+  });
+  it("rifiuta anni a due cifre o prima del 1900", () => {
+    expect(() => addMonths("0026-01-01", 1)).toThrow();
+    expect(() => addMonths("1899-12-31", 1)).toThrow();
+  });
+});
+
+describe("rinnovo dalla scadenza (RCA, bollo)", () => {
+  const rca = { months: 12, renewFromDue: true };
+
+  it("pagata in anticipo: scade comunque all'anniversario", () => {
+    expect(nextDue("2026-09-20", null, rca, "2026-10-05").dueOn).toBe("2027-10-05");
+  });
+  it("pagata nei giorni di tolleranza: non slitta in avanti", () => {
+    expect(nextDue("2026-10-15", null, rca, "2026-10-05").dueOn).toBe("2027-10-05");
+  });
+  it("bollo: dalla fine del mese di scadenza, anche se pagato il mese dopo", () => {
+    expect(
+      nextDue("2026-11-20", null, { months: 12, monthEnd: true, renewFromDue: true }, "2026-10-31")
+        .dueOn,
+    ).toBe("2027-10-31");
+  });
+  it("se l'anniversario è già passato (mezzo rimasto scoperto), si riparte dal pagamento", () => {
+    expect(nextDue("2027-03-01", null, rca, "2025-10-05").dueOn).toBe("2028-03-01");
+  });
+  it("senza scadenza precedente si conta dal pagamento", () => {
+    expect(nextDue("2026-09-20", null, rca, null).dueOn).toBe("2027-09-20");
+  });
+  it("revisione e tagliando restano dal giorno dell'adempimento", () => {
+    expect(nextDue("2026-03-10", null, { months: 12, monthEnd: true }, "2026-05-31").dueOn).toBe(
+      "2027-03-31",
+    );
+  });
+});
+
+describe("effectiveDeadline", () => {
+  const type = {
+    intervalMonths: 12,
+    intervalDays: null,
+    intervalKm: 30_000,
+    alertDays: 30,
+    alertKm: 2_000,
+    blocking: false,
+  };
+
+  it("senza regola né correzioni vale il tipo", () => {
+    expect(effectiveDeadline(type, null, {})).toEqual(type);
+  });
+  it("la regola corregge il tipo, la scadenza corregge la regola", () => {
+    const out = effectiveDeadline(
+      type,
+      { intervalMonths: 24, alertKm: 1_000 },
+      { intervalKm: 40_000 },
+    );
+    expect(out).toEqual({ ...type, intervalMonths: 24, alertKm: 1_000, intervalKm: 40_000 });
+  });
+  it("una correzione in giorni sulla scadenza toglie i mesi di regola e tipo", () => {
+    const out = effectiveDeadline(type, { intervalMonths: 24 }, { intervalDays: 7 });
+    expect(out).toMatchObject({ intervalMonths: null, intervalDays: 7 });
+  });
+  it("blocco: vince il livello più vicino alla scadenza", () => {
+    expect(effectiveDeadline(type, { blocking: true }, {}).blocking).toBe(true);
+    expect(effectiveDeadline(type, { blocking: true }, { blocking: false }).blocking).toBe(false);
   });
 });

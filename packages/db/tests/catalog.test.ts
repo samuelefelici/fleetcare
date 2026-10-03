@@ -50,11 +50,57 @@ describe("catalogo iniziale", () => {
     expect(unique(keys)).toBe(true);
   });
 
-  it("la revisione delle ambulanze è annuale", () => {
-    const rule = DEADLINE_RULES.find(
-      (r) => r.deadlineType === "revisione" && r.vehicleCategory === "emergency_ambulance",
+  it("revisione annuale per le ambulanze e, dal lato sicuro, per pulmini e protezione civile", () => {
+    const months = (category: string) =>
+      DEADLINE_RULES.find((r) => r.deadlineType === "revisione" && r.vehicleCategory === category)
+        ?.intervalMonths;
+    for (const c of [
+      "emergency_ambulance",
+      "transport_ambulance",
+      "disabled_transport",
+      "civil_protection",
+    ])
+      expect(months(c), c).toBe(12);
+    for (const c of ["medical_car", "service_car"]) expect(months(c), c).toBe(24);
+  });
+
+  it("RCA e bollo si rinnovano dalla scadenza; revisione e tagliando no", () => {
+    const type = (code: string) => DEADLINE_TYPES.find((d) => d.code === code);
+    expect(type("rca")?.renewFromDue).toBe(true);
+    expect(type("bollo")?.renewFromDue).toBe(true);
+    expect(type("revisione")?.renewFromDue).toBeFalsy();
+    expect(type("tagliando")?.renewFromDue).toBeFalsy();
+  });
+
+  it("una sola tassa automobilistica, e la sanificazione periodica la chiude l'equipaggio", () => {
+    expect(DEADLINE_TYPES.filter((d) => d.isVehicleTax).map((d) => d.code)).toEqual(["bollo"]);
+    expect(DEADLINE_TYPES.filter((d) => d.completedByCrew).map((d) => d.code)).toEqual([
+      "sanificazione_periodica",
+    ]);
+  });
+
+  it("ogni attrezzatura elettromedicale ha la verifica elettrica, e viceversa", () => {
+    const withCheck = new Set(
+      DEADLINE_RULES.filter((r) => r.deadlineType === "verifica_elettrica").map(
+        (r) => r.equipmentType,
+      ),
     );
-    expect(rule?.intervalMonths).toBe(12);
+    for (const e of EQUIPMENT_TYPES) expect(withCheck.has(e.code), e.code).toBe(e.electromedical);
+  });
+
+  it("una check-list controlla solo ciò che le sue categorie hanno in dotazione", () => {
+    const inKit = (category: string, k: { equipmentType?: string; supplyItem?: string }) =>
+      KIT_REQUIREMENTS.some(
+        (r) =>
+          r.vehicleCategory === category &&
+          ((k.equipmentType && r.equipmentType === k.equipmentType) ||
+            (k.supplyItem && r.supplyItem === k.supplyItem)),
+      );
+    for (const t of CHECKLIST_TEMPLATES)
+      for (const item of t.items)
+        if (item.equipmentType || item.supplyItem)
+          for (const category of t.vehicleCategories)
+            expect(inKit(category, item), `${t.name} / ${item.label} / ${category}`).toBe(true);
   });
 
   it("dotazione e check-list citano solo attrezzature e articoli a catalogo", () => {
@@ -73,7 +119,9 @@ describe("catalogo iniziale", () => {
     }
   });
 
-  it("ogni categoria di mezzo ha una check-list", () => {
+  it("ogni categoria di mezzo ha esattamente una check-list", () => {
+    const all = CHECKLIST_TEMPLATES.flatMap((t) => t.vehicleCategories);
+    expect(unique(all)).toBe(true);
     const covered = new Set(CHECKLIST_TEMPLATES.flatMap((t) => t.vehicleCategories));
     expect([...covered].sort()).toEqual(
       [

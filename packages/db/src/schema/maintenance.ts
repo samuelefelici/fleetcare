@@ -11,7 +11,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { fleetcareSchema } from "./_schema";
+import { fleetcareSchema, tenantFk, tenantKey } from "./_schema";
 import { accidents } from "./accidents";
 import { profiles, suppliers, tenants } from "./core";
 import { downtimeCause, maintenanceKind, maintenanceStatus } from "./enums";
@@ -40,10 +40,10 @@ export const maintenanceJobs = fleetcareSchema.table(
       .references(() => tenants.id),
     number: text("number").notNull(), // MAN-YYYY-NNNNN
     /** il mezzo; può mancare solo per l'assistenza su un'attrezzatura spedita da sola */
-    vehicleId: uuid("vehicle_id").references(() => vehicles.id),
-    equipmentId: uuid("equipment_id").references(() => equipment.id),
+    vehicleId: uuid("vehicle_id"),
+    equipmentId: uuid("equipment_id"),
     /** null = fatto in casa dai volontari */
-    supplierId: uuid("supplier_id").references(() => suppliers.id),
+    supplierId: uuid("supplier_id"),
     kind: maintenanceKind("kind").notNull(),
     status: maintenanceStatus("status").notNull().default("planned"),
     title: text("title").notNull(), // "Tagliando 60.000 km"
@@ -68,12 +68,13 @@ export const maintenanceJobs = fleetcareSchema.table(
     /** in garanzia: non dovremmo pagarlo */
     warranty: boolean("warranty").notNull().default(false),
     /** riparazione conseguente a un sinistro */
-    accidentId: uuid("accident_id").references(() => accidents.id),
-    createdById: uuid("created_by_id").references(() => profiles.id),
+    accidentId: uuid("accident_id"),
+    createdById: uuid("created_by_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    tenantKey("maintenance_jobs", t),
     uniqueIndex("maintenance_jobs_tenant_number_uq").on(t.tenantId, t.number),
     index("maintenance_jobs_tenant_status_idx").on(t.tenantId, t.status),
     index("maintenance_jobs_vehicle_idx").on(t.tenantId, t.vehicleId, t.plannedOn),
@@ -86,6 +87,11 @@ export const maintenanceJobs = fleetcareSchema.table(
       "maintenance_jobs_dates_ck",
       sql`${t.returnedAt} is null or ${t.droppedOffAt} is null or ${t.returnedAt} >= ${t.droppedOffAt}`,
     ),
+    tenantFk("maintenance_jobs_vehicle_id_fk", t.tenantId, t.vehicleId, vehicles),
+    tenantFk("maintenance_jobs_equipment_id_fk", t.tenantId, t.equipmentId, equipment),
+    tenantFk("maintenance_jobs_supplier_id_fk", t.tenantId, t.supplierId, suppliers),
+    tenantFk("maintenance_jobs_accident_id_fk", t.tenantId, t.accidentId, accidents),
+    tenantFk("maintenance_jobs_created_by_id_fk", t.tenantId, t.createdById, profiles),
   ],
 );
 
@@ -103,17 +109,15 @@ export const vehicleDowntimes = fleetcareSchema.table(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
-    vehicleId: uuid("vehicle_id")
-      .notNull()
-      .references(() => vehicles.id),
+    vehicleId: uuid("vehicle_id").notNull(),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     endedAt: timestamp("ended_at", { withTimezone: true }),
     cause: downtimeCause("cause").notNull(),
-    maintenanceJobId: uuid("maintenance_job_id").references(() => maintenanceJobs.id),
+    maintenanceJobId: uuid("maintenance_job_id"),
     /** il mezzo che lo ha sostituito in turno, se c'è stato */
-    replacementVehicleId: uuid("replacement_vehicle_id").references(() => vehicles.id),
+    replacementVehicleId: uuid("replacement_vehicle_id"),
     note: text("note"),
-    createdById: uuid("created_by_id").references(() => profiles.id),
+    createdById: uuid("created_by_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -127,5 +131,19 @@ export const vehicleDowntimes = fleetcareSchema.table(
       "downtimes_replacement_ck",
       sql`${t.replacementVehicleId} is null or ${t.replacementVehicleId} <> ${t.vehicleId}`,
     ),
+    tenantFk("vehicle_downtimes_vehicle_id_fk", t.tenantId, t.vehicleId, vehicles),
+    tenantFk(
+      "vehicle_downtimes_maintenance_job_id_fk",
+      t.tenantId,
+      t.maintenanceJobId,
+      maintenanceJobs,
+    ),
+    tenantFk(
+      "vehicle_downtimes_replacement_vehicle_id_fk",
+      t.tenantId,
+      t.replacementVehicleId,
+      vehicles,
+    ),
+    tenantFk("vehicle_downtimes_created_by_id_fk", t.tenantId, t.createdById, profiles),
   ],
 );

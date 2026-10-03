@@ -41,12 +41,18 @@ describe("riconoscimento del mezzo dalla matricola", () => {
   it("normalizza spazi, trattini, minuscole e zeri iniziali dei codici numerici", () => {
     expect(normalizePlate(" fx-123 ab ")).toBe("FX123AB");
     expect(normalizeVehicleCode("005")).toBe("5");
+    expect(normalizeVehicleCode("000")).toBe("0");
     expect(normalizeVehicleCode("0")).toBe("0");
     expect(normalizeVehicleCode("m-0012")).toBe("M0012");
+    expect(normalizeVehicleCode("0A7")).toBe("0A7");
   });
 
-  it("la matricola del distributore registrata sul mezzo vince sul numero interno", () => {
+  it("un mezzo con matricola del distributore si riconosce da quella", () => {
     expect(resolveVehicleId("M 0012", vehicles)).toBe("pul1");
+  });
+
+  it("…e non più dal suo numero interno, che il distributore non usa", () => {
+    expect(resolveVehicleId("20", vehicles)).toBeNull();
   });
 
   it("senza matricola del distributore vale il numero interno, zeri compresi", () => {
@@ -55,11 +61,19 @@ describe("riconoscimento del mezzo dalla matricola", () => {
     expect(resolveVehicleId("12", vehicles)).toBe("amb2");
   });
 
-  it("la targa resta l'ultima risorsa", () => {
+  it("la targa solo quando nessun codice corrisponde", () => {
     expect(resolveVehicleId("fx 456 ab", vehicles)).toBe("amb2");
   });
 
-  it("se a un livello i mezzi possibili sono due, non indovina", () => {
+  it("la matricola di un mezzo uguale al numero interno di un altro: non indovina", () => {
+    const conflitto = [
+      { id: "a", plate: "AA111AA", internalCode: "30", fuelVehicleCode: "7" },
+      { id: "b", plate: "BB222BB", internalCode: "007", fuelVehicleCode: null },
+    ];
+    expect(resolveVehicleId("7", conflitto)).toBeNull();
+  });
+
+  it("due mezzi con lo stesso numero interno normalizzato: non indovina", () => {
     const doppi = [
       { id: "a", plate: "AA111AA", internalCode: "7", fuelVehicleCode: null },
       { id: "b", plate: "BB222BB", internalCode: "007", fuelVehicleCode: null },
@@ -134,19 +148,87 @@ describe("reconcileFuel", () => {
   });
 
   it("due pieni lo stesso giorno: vince la coppia più vicina, non l'ordine delle righe", () => {
+    // in ordine, la prima riga (20,4 L) è entro tolleranza da entrambi i
+    // pieni: un abbinamento «al primo trovato» le darebbe F1 (20,0 L) e
+    // lascerebbe a L2 (20,0 L esatti) il pieno sbagliato
     const logs = [
       log("F1", { liters: 20, amountEur: 35 }),
-      log("F2", { liters: 45.3, amountEur: 79.28 }),
+      log("F2", { liters: 20.4, amountEur: 35.4 }),
     ];
     const lines = [
-      line("L1", { liters: 45.3, amountEur: 79.28 }),
+      line("L1", { liters: 20.4, amountEur: 35.4 }),
       line("L2", { liters: 20, amountEur: 35 }),
     ];
     const r = reconcileFuel(lines, logs);
-    expect(r.lines.map((l) => [l.lineId, l.fuelLogId, l.status])).toEqual([
-      ["L1", "F2", "matched"],
-      ["L2", "F1", "matched"],
+    expect(r.lines.map((l) => [l.lineId, l.fuelLogId, l.litersDiff])).toEqual([
+      ["L1", "F2", 0],
+      ["L2", "F1", 0],
     ]);
+  });
+
+  it("una riga, due pieni entro tolleranza: vince il più vicino, non il primo in elenco", () => {
+    const r = reconcileFuel(
+      [line("L", { liters: 20, amountEur: 35 })],
+      [
+        log("lontano", { liters: 20.4, amountEur: 35.4 }),
+        log("vicino", { liters: 20, amountEur: 35 }),
+      ],
+    );
+    expect(r.lines[0]?.fuelLogId).toBe("vicino");
+    expect(r.unbilledLogIds).toEqual(["lontano"]);
+  });
+
+  it("date del distributore spostate di un giorno: si abbinano tutte, nessuna orfana", () => {
+    // pieni simili il 10 e l'11; il distributore li data 11 e 12
+    const logs = [
+      log("F10", { refueledOn: "2026-09-10" }),
+      log("F11", { refueledOn: "2026-09-11" }),
+    ];
+    const lines = [
+      line("L11", { refueledOn: "2026-09-11" }),
+      line("L12", { refueledOn: "2026-09-12" }),
+    ];
+    const r = reconcileFuel(lines, logs);
+    expect(r.lines.every((l) => l.status === "matched")).toBe(true);
+    expect(r.unbilledLogIds).toEqual([]);
+    expect(Object.fromEntries(r.lines.map((l) => [l.lineId, l.fuelLogId]))).toEqual({
+      L11: "F10",
+      L12: "F11",
+    });
+  });
+
+  it("stesso buono su gasolio e AdBlue: ognuno col suo prodotto", () => {
+    const logs = [
+      log("D", { receiptNumber: "88" }),
+      log("A", { receiptNumber: "88", product: "adblue", liters: 10, amountEur: 9 }),
+    ];
+    const lines = [
+      line("LA", { receiptNumber: "88", product: "adblue", liters: 10, amountEur: 9 }),
+      line("LD", { receiptNumber: "88" }),
+    ];
+    const r = reconcileFuel(lines, logs);
+    expect(Object.fromEntries(r.lines.map((l) => [l.lineId, [l.fuelLogId, l.status]]))).toEqual({
+      LA: ["A", "matched"],
+      LD: ["D", "matched"],
+    });
+  });
+
+  it("buono ripetuto in due giorni vicini: vince quello della stessa data", () => {
+    const logs = [
+      log("ieri", { receiptNumber: "5", refueledOn: "2026-09-09" }),
+      log("oggi", { receiptNumber: "5", refueledOn: "2026-09-10" }),
+    ];
+    const r = reconcileFuel([line("L", { receiptNumber: "5", refueledOn: "2026-09-10" })], logs);
+    expect(r.lines[0]?.fuelLogId).toBe("oggi");
+  });
+
+  it("stesso buono senza litri né importo da confrontare: abbinata, con il motivo detto", () => {
+    const r = reconcileFuel(
+      [line("L", { receiptNumber: "9", liters: null })],
+      [log("F", { receiptNumber: "9", amountEur: null })],
+    );
+    expect(r.lines[0]).toMatchObject({ status: "matched", fuelLogId: "F" });
+    expect(r.lines[0]?.reason).toBe("stesso buono (litri e importo non confrontabili)");
   });
 
   it("un rifornimento si abbina a una riga sola", () => {

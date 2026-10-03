@@ -21,8 +21,10 @@ packages/db                     @fleetcare/db
   src/domain/labels.ts          etichette italiane degli enum
   src/seed/catalog.ts           catalogo iniziale: scadenze, attrezzature, dotazione, check-list
   migrations/0000_init.sql      generata da drizzle-kit
-  migrations/0001_rls_and_functions.sql   ruolo app, RLS per ruolo, audit, trigger km, login
-  tests/                        Vitest (dominio + catalogo) e rls.test.sql (policy)
+  migrations/0001_rls_and_functions.sql   ruolo app, RLS, audit, regole del database, vista
+                                delle scadenze effettive, login, numerazione
+  tests/                        Vitest (dominio + catalogo), rls.test.sql (permessi),
+                                rules.test.sql (regole del database)
 docs/analisi-campi.md           l'analisi
 ```
 
@@ -40,7 +42,7 @@ cp .env.example .env
 export DATABASE_ADMIN_URL=postgres://postgres:postgres@localhost:5432/fleetcare
 
 pnpm db:migrate     # schema + ruolo fleetcare_app + RLS
-pnpm db:seed        # associazione «Croce Gialla di Camerano» + catalogo (idempotente)
+pnpm db:seed        # associazione «Croce Gialla di Camerano» + catalogo (scritto una volta sola)
 ```
 
 Il seed non crea mezzi né utenti: il parco si carica dai dati reali.
@@ -52,12 +54,14 @@ pnpm lint          # prettier --check
 pnpm typecheck     # tsc strict
 pnpm test          # Vitest: scadenze, abbinamento carburante, coerenza del catalogo
 
-# policy RLS, con il ruolo applicativo vero (serve un DB migrato):
-psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/rls.test.sql
+# su un DB migrato, con il ruolo applicativo vero; chiudono con ROLLBACK:
+psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/rls.test.sql    # permessi
+psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/rules.test.sql  # regole
 ```
 
-La CI esegue tutto questo su un Postgres vero, più un controllo che fallisce se
-lo schema cambia senza la migration corrispondente.
+La CI esegue tutto questo su un Postgres vero, più due controlli: lo schema non
+cambia senza la migration corrispondente, e un secondo seed non fa risorgere
+ciò che è stato cancellato.
 
 ## Modificare lo schema
 
@@ -66,11 +70,16 @@ lo schema cambia senza la migration corrispondente.
 3. SQL non esprimibile in Drizzle (policy, trigger, funzioni):
    `pnpm --filter @fleetcare/db exec drizzle-kit generate --custom --name <nome>`.
 
-Ogni nuova tabella con `tenant_id` riceve RLS e isolamento solo se la migration
-lo dice: la 0001 li applica alle tabelle che esistono quando gira. Per le
-tabelle nuove vanno aggiunti nella loro migration. Se ci si dimentica,
-`rls.test.sql` fallisce: controlla che ogni tabella dello schema abbia RLS
-attiva e la policy `tenant_isolation`.
+Due regole per ogni tabella nuova dell'associazione:
+
+- **riferimenti con `tenantFk`**, mai `.references()` verso un'altra tabella
+  dell'associazione, e `tenantKey` sulla tabella se altre la referenziano: la
+  chiave composta `(tenant_id, id)` impedisce di puntare ai dati di un'altra
+  associazione (vedi `src/schema/_schema.ts`);
+- **RLS e isolamento nella sua migration**: la 0001 li applica alle tabelle che
+  esistono quando gira. Se ci si dimentica, `rls.test.sql` fallisce: controlla
+  che ogni tabella abbia RLS attiva e una policy `tenant_isolation` scritta
+  giusta, e che non ci siano altre policy permissive.
 
 ## Sicurezza
 

@@ -2,7 +2,7 @@ import { defineConfig } from "drizzle-kit";
 
 export default defineConfig({
   dialect: "postgresql",
-  schema: "./src/schema",
+  schema: "./src/schema/index.ts",
   out: "./migrations",
   // tutto FleetCare vive nello schema "fleetcare": drizzle-kit non guarda altrove
   schemaFilter: ["fleetcare"],

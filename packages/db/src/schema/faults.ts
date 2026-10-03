@@ -1,5 +1,5 @@
 import { boolean, index, integer, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
-import { fleetcareSchema } from "./_schema";
+import { fleetcareSchema, tenantFk, tenantKey } from "./_schema";
 import { profiles, tenants } from "./core";
 import { faultArea, faultSeverity, faultStatus } from "./enums";
 import { equipment } from "./equipment";
@@ -22,11 +22,9 @@ export const faultReports = fleetcareSchema.table(
       .notNull()
       .references(() => tenants.id),
     number: text("number").notNull(), // SGN-YYYY-NNNNN
-    vehicleId: uuid("vehicle_id")
-      .notNull()
-      .references(() => vehicles.id),
+    vehicleId: uuid("vehicle_id").notNull(),
     /** se il guasto è di un'attrezzatura: quale (l'aspiratore non aspira, il DAE non supera l'autotest) */
-    equipmentId: uuid("equipment_id").references(() => equipment.id),
+    equipmentId: uuid("equipment_id"),
     area: faultArea("area").notNull().default("other"),
     description: text("description").notNull(),
     severity: faultSeverity("severity").notNull(),
@@ -34,11 +32,9 @@ export const faultReports = fleetcareSchema.table(
     /** «il mezzo non è sicuro»: avviso immediato al responsabile, il mezzo va verificato prima di uscire */
     unsafe: boolean("unsafe").notNull().default(false),
     /** chi ha segnalato, dall'app sul proprio dispositivo (mai a nome di un altro) */
-    reportedById: uuid("reported_by_id")
-      .notNull()
-      .references(() => profiles.id),
+    reportedById: uuid("reported_by_id").notNull(),
     odometerKm: integer("odometer_km"),
-    maintenanceJobId: uuid("maintenance_job_id").references(() => maintenanceJobs.id),
+    maintenanceJobId: uuid("maintenance_job_id"),
     acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     resolutionNote: text("resolution_note"),
@@ -47,10 +43,20 @@ export const faultReports = fleetcareSchema.table(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    tenantKey("fault_reports", t),
     uniqueIndex("fault_reports_tenant_number_uq").on(t.tenantId, t.number),
     index("fault_reports_tenant_status_idx").on(t.tenantId, t.status),
     index("fault_reports_vehicle_idx").on(t.tenantId, t.vehicleId, t.status),
     index("fault_reports_created_idx").on(t.tenantId, t.createdAt),
+    tenantFk("fault_reports_vehicle_id_fk", t.tenantId, t.vehicleId, vehicles),
+    tenantFk("fault_reports_equipment_id_fk", t.tenantId, t.equipmentId, equipment),
+    tenantFk("fault_reports_reported_by_id_fk", t.tenantId, t.reportedById, profiles),
+    tenantFk(
+      "fault_reports_maintenance_job_id_fk",
+      t.tenantId,
+      t.maintenanceJobId,
+      maintenanceJobs,
+    ),
   ],
 );
 
@@ -68,15 +74,21 @@ export const faultReportComments = fleetcareSchema.table(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
-    faultReportId: uuid("fault_report_id")
-      .notNull()
-      .references(() => faultReports.id, { onDelete: "cascade" }),
-    authorId: uuid("author_id")
-      .notNull()
-      .references(() => profiles.id),
+    faultReportId: uuid("fault_report_id").notNull(),
+    authorId: uuid("author_id").notNull(),
     body: text("body").notNull(),
     internal: boolean("internal").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("fault_report_comments_report_idx").on(t.tenantId, t.faultReportId, t.createdAt)],
+  (t) => [
+    index("fault_report_comments_report_idx").on(t.tenantId, t.faultReportId, t.createdAt),
+    tenantFk(
+      "fault_report_comments_fault_report_id_fk",
+      t.tenantId,
+      t.faultReportId,
+      faultReports,
+      "cascade",
+    ),
+    tenantFk("fault_report_comments_author_id_fk", t.tenantId, t.authorId, profiles),
+  ],
 );

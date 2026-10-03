@@ -57,5 +57,18 @@ jobs:
       - name: Migrate + seed
         run: pnpm db:migrate && pnpm db:seed
 
-      - name: RLS policy tests
+      - name: Test dei permessi (RLS)
         run: psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/rls.test.sql
+
+      - name: Test delle regole del database
+        run: psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/rules.test.sql
+
+      # un secondo seed non deve far risorgere ciò che l'associazione ha eliminato
+      - name: Seed rilanciato dopo una cancellazione
+        run: |
+          q() { psql "$DATABASE_ADMIN_URL" -Atc "$1"; }
+          before=$(q "select count(*) from fleetcare.deadline_rules")
+          q "delete from fleetcare.deadline_rules where id = (select id from fleetcare.deadline_rules limit 1)"
+          pnpm db:seed
+          after=$(q "select count(*) from fleetcare.deadline_rules")
+          test "$after" -eq "$((before - 1))"

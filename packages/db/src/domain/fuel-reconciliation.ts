@@ -79,8 +79,8 @@ export function normalizePlate(raw: string): string {
  * stesso mezzo: il distributore e l'associazione non li scrivono uguali).
  */
 export function normalizeVehicleCode(raw: string): string {
-  const key = normalizePlate(raw);
-  return /^\d+$/.test(key) ? key.replace(/^0+(?=\d)/, "") : key;
+  // la stessa regola degli indici unici di `vehicles` (migration 0000)
+  return normalizePlate(raw).replace(/^0+(\d+)$/, "$1");
 }
 
 export interface VehicleForMatch {
@@ -92,11 +92,14 @@ export interface VehicleForMatch {
 }
 
 /**
- * Riconosce il mezzo dalla matricola scritta dal distributore. Prova, in
- * ordine: la matricola del distributore registrata sul mezzo, il numero
- * interno, la targa. Al primo livello che dà un risultato si ferma; se a
- * quel livello i mezzi possibili sono più di uno non indovina: restituisce
- * null e la riga resta da abbinare a mano.
+ * Riconosce il mezzo dalla matricola scritta dal distributore.
+ *
+ * Un mezzo con una matricola del distributore registrata
+ * (`fuelVehicleCode`) si riconosce solo da quella; un mezzo senza, dal
+ * numero interno. Se così i mezzi possibili sono più di uno (la matricola
+ * di un mezzo è il numero interno di un altro) non indovina: restituisce
+ * null e la riga resta da abbinare a mano. Solo se nessun codice
+ * corrisponde prova la targa.
  */
 export function resolveVehicleId(
   vehicleRefRaw: string | null,
@@ -105,17 +108,13 @@ export function resolveVehicleId(
   if (!vehicleRefRaw) return null;
   const code = normalizeVehicleCode(vehicleRefRaw);
   if (!code) return null;
-  const tiers: Array<(v: VehicleForMatch) => boolean> = [
-    (v) => v.fuelVehicleCode !== null && normalizeVehicleCode(v.fuelVehicleCode) === code,
-    (v) => normalizeVehicleCode(v.internalCode) === code,
-    (v) => normalizePlate(v.plate) === normalizePlate(vehicleRefRaw),
-  ];
-  for (const matches of tiers) {
-    const hits = vehicles.filter(matches);
-    if (hits.length === 1) return hits[0]!.id;
-    if (hits.length > 1) return null;
-  }
-  return null;
+  const byCode = vehicles.filter(
+    (v) => normalizeVehicleCode(v.fuelVehicleCode ?? v.internalCode) === code,
+  );
+  if (byCode.length === 1) return byCode[0]!.id;
+  if (byCode.length > 1) return null;
+  const byPlate = vehicles.filter((v) => normalizePlate(v.plate) === normalizePlate(vehicleRefRaw));
+  return byPlate.length === 1 ? byPlate[0]!.id : null;
 }
 
 /** Importo della riga al lordo IVA, arrotondato al centesimo. */
@@ -202,49 +201,90 @@ export function reconcileFuel(
     });
   };
 
-  // 1. numero di buono
+  const sameDayish = (line: InvoiceLineForMatch, log: FuelLogForMatch) =>
+    Math.abs(daysBetween(log.refueledOn, line.refueledOn)) <= tol.days;
+
+  // 1. numero di buono: stesso buono, stesso prodotto, data vicina (i buoni
+  //    si ripetono fra giorni e pompe). Fra più candidati vince il più vicino.
   for (const line of lines) {
     const receipt = normalizeReceipt(line.receiptNumber);
     if (!receipt) continue;
-    const log = logs.find(
-      (l) =>
-        !usedLogs.has(l.id) &&
-        normalizeReceipt(l.receiptNumber) === receipt &&
-        // i buoni si ripetono (numerazione per giorno o per pompa): serve anche la data
-        Math.abs(daysBetween(l.refueledOn, line.refueledOn)) <= tol.days &&
-        (line.vehicleId === null || l.vehicleId === line.vehicleId),
-    );
-    if (!log) continue;
-    const c = compare(line, log, tol);
+    const best = logs
+      .filter(
+        (l) =>
+          !usedLogs.has(l.id) &&
+          normalizeReceipt(l.receiptNumber) === receipt &&
+          l.product === line.product &&
+          sameDayish(line, l) &&
+          (line.vehicleId === null || l.vehicleId === line.vehicleId),
+      )
+      .map((log) => ({ log, c: compare(line, log, tol) }))
+      .sort((a, b) => byDistance(a.c.distance, b.c.distance))[0];
+    if (!best) continue;
+    const { log, c } = best;
     if (c.withinTolerance) assign(line, log, c, "matched", "stesso buono");
+    else if (c.litersDiff === null && c.amountDiff === null)
+      assign(line, log, c, "matched", "stesso buono (litri e importo non confrontabili)");
     else assign(line, log, c, "mismatch", `stesso buono, numeri diversi: ${describe(c)}`);
   }
 
-  // 2 e 3. mezzo + prodotto + data, la coppia più vicina per prima
-  const pairs = (withinTolerance: boolean) => {
-    const out: { line: InvoiceLineForMatch; log: FuelLogForMatch; c: Comparison }[] = [];
+  // candidati per mezzo + prodotto + data, ordinati dal più vicino
+  const candidates = (withinTolerance: boolean) => {
+    const out = new Map<string, { log: FuelLogForMatch; c: Comparison }[]>();
     for (const line of lines) {
       if (result.has(line.id) || line.vehicleId === null) continue;
-      for (const log of logs) {
-        if (
-          usedLogs.has(log.id) ||
-          log.vehicleId !== line.vehicleId ||
-          log.product !== line.product
+      const list = logs
+        .filter(
+          (log) =>
+            !usedLogs.has(log.id) &&
+            log.vehicleId === line.vehicleId &&
+            log.product === line.product &&
+            sameDayish(line, log),
         )
-          continue;
-        if (Math.abs(daysBetween(log.refueledOn, line.refueledOn)) > tol.days) continue;
-        const c = compare(line, log, tol);
-        if (c.withinTolerance === withinTolerance) out.push({ line, log, c });
-      }
+        .map((log) => ({ log, c: compare(line, log, tol) }))
+        .filter((x) => x.c.withinTolerance === withinTolerance)
+        .sort((a, b) => byDistance(a.c.distance, b.c.distance));
+      if (list.length) out.set(line.id, list);
     }
-    return out.sort((a, b) => byDistance(a.c.distance, b.c.distance));
+    return out;
   };
 
-  for (const { line, log, c } of pairs(true)) {
-    if (result.has(line.id) || usedLogs.has(log.id)) continue;
-    assign(line, log, c, "matched", "stesso mezzo, data e quantità");
+  // 2. abbinamento entro tolleranza: il massimo numero di coppie, preferendo
+  //    le più vicine. Un greedy «prima la coppia più vicina» sbaglia quando il
+  //    distributore sposta le date di un giorno e il mezzo fa pieni simili in
+  //    giorni consecutivi: una riga ruba il rifornimento all'altra e restano
+  //    una riga e un rifornimento orfani. Qui una riga già abbinata cede il
+  //    suo rifornimento se ne ha un altro (cammino aumentante).
+  const within = candidates(true);
+  const lineById = new Map(lines.map((l) => [l.id, l]));
+  const owner = new Map<string, string>(); // rifornimento → riga
+  const tryAssign = (lineId: string, seen: Set<string>): boolean => {
+    for (const { log } of within.get(lineId) ?? []) {
+      if (seen.has(log.id)) continue;
+      seen.add(log.id);
+      const holder = owner.get(log.id);
+      if (holder === undefined || tryAssign(holder, seen)) {
+        owner.set(log.id, lineId);
+        return true;
+      }
+    }
+    return false;
+  };
+  const order = [...within.entries()].sort((a, b) =>
+    byDistance(a[1][0]!.c.distance, b[1][0]!.c.distance),
+  );
+  for (const [lineId] of order) tryAssign(lineId, new Set());
+  for (const [logId, lineId] of owner) {
+    const found = within.get(lineId)!.find((x) => x.log.id === logId)!;
+    assign(lineById.get(lineId)!, found.log, found.c, "matched", "stesso mezzo, data e quantità");
   }
-  for (const { line, log, c } of pairs(false)) {
+
+  // 3. sullo stesso mezzo e prodotto, data vicina, ma numeri che non tornano:
+  //    il candidato più vicino, da guardare a mano
+  const pairs = [...candidates(false).entries()]
+    .flatMap(([lineId, list]) => list.map((x) => ({ line: lineById.get(lineId)!, ...x })))
+    .sort((a, b) => byDistance(a.c.distance, b.c.distance));
+  for (const { line, log, c } of pairs) {
     if (result.has(line.id) || usedLogs.has(log.id)) continue;
     assign(
       line,
