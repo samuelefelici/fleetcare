@@ -125,10 +125,19 @@ export function resolveVehicleId(
   return byPlate.length === 1 ? byPlate[0]!.id : null;
 }
 
+/**
+ * Arrotonda al centesimo, il mezzo centesimo per eccesso. `Math.round(x * 100)`
+ * da solo sbaglia: 28,75 € + 22% fa 35,075, che in virgola mobile è
+ * 35,07499999… e diventerebbe 35,07. Ridotto a 12 cifre significative il
+ * numero torna quello scritto.
+ */
+function roundCents(n: number): number {
+  return Math.round(Number((n * 100).toPrecision(12))) / 100;
+}
+
 /** Importo della riga al lordo IVA, arrotondato al centesimo. */
 export function grossAmount(amount: number, vatRatePct: number, includesVat: boolean): number {
-  const gross = includesVat ? amount : amount * (1 + vatRatePct / 100);
-  return Math.round(gross * 100) / 100;
+  return roundCents(includesVat ? amount : amount * (1 + vatRatePct / 100));
 }
 
 function normalizeReceipt(raw: string | null): string | null {
@@ -140,8 +149,6 @@ function normalizeReceipt(raw: string | null): string | null {
   return key || null;
 }
 
-const round2 = (n: number) => Math.round(n * 100) / 100;
-
 interface Comparison {
   litersDiff: number | null;
   amountDiff: number | null;
@@ -152,8 +159,8 @@ interface Comparison {
 }
 
 function compare(line: InvoiceLineForMatch, log: FuelLogForMatch, tol: MatchTolerance): Comparison {
-  const litersDiff = line.liters === null ? null : round2(line.liters - log.liters);
-  const amountDiff = log.amountEur === null ? null : round2(line.amountEur - log.amountEur);
+  const litersDiff = line.liters === null ? null : roundCents(line.liters - log.liters);
+  const amountDiff = log.amountEur === null ? null : roundCents(line.amountEur - log.amountEur);
   const litersOk = litersDiff === null || Math.abs(litersDiff) <= tol.liters;
   const amountOk = amountDiff === null || Math.abs(amountDiff) <= tol.amountEur;
   // senza almeno un numero confrontabile non c'è prova che sia lo stesso pieno
@@ -324,12 +331,27 @@ export function reconcileFuel(
 
   const notComparable = (x: Candidate) => x.c.litersDiff === null && x.c.amountDiff === null;
 
-  // 1. stesso buono, numeri che tornano (o che non si possono confrontare)
+  // 1. stesso buono, numeri che tornano (o che non si possono confrontare):
+  //    assegnazione ottima per buono e prodotto, come la passata 2. I numeri
+  //    dei buoni si ripetono: con due righe e due pieni dello stesso buono
+  //    in giorni vicini, la coppia più vicina presa per prima può lasciare
+  //    orfani una riga e un pieno che si potevano abbinare.
+  const receiptGroups = new Map<string, Candidate[]>();
   for (const x of byReceipt) {
-    if (!free(x)) continue;
-    if (x.c.withinTolerance) assign(x, "matched", "stesso buono");
-    else if (notComparable(x))
-      assign(x, "matched", "stesso buono (litri e importo non confrontabili)");
+    if (!x.c.withinTolerance && !notComparable(x)) continue;
+    const key = `${normalizeReceipt(x.line.receiptNumber)}|${x.line.product}`;
+    const list = receiptGroups.get(key) ?? [];
+    list.push(x);
+    receiptGroups.set(key, list);
+  }
+  for (const key of [...receiptGroups.keys()].sort()) {
+    for (const x of optimalAssignment(receiptGroups.get(key)!)) {
+      assign(
+        x,
+        "matched",
+        x.c.withinTolerance ? "stesso buono" : "stesso buono (litri e importo non confrontabili)",
+      );
+    }
   }
 
   // 2. stesso mezzo entro tolleranza: assegnazione OTTIMA per mezzo e

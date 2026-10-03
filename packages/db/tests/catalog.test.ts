@@ -79,6 +79,11 @@ describe("catalogo iniziale", () => {
     ]);
   });
 
+  it("ogni tipo di attrezzatura ha almeno una scadenza", () => {
+    const withRules = new Set(DEADLINE_RULES.map((r) => r.equipmentType).filter(Boolean));
+    expect(EQUIPMENT_TYPES.map((t) => t.code).filter((code) => !withRules.has(code))).toEqual([]);
+  });
+
   it("ogni attrezzatura elettromedicale ha la verifica elettrica, e viceversa", () => {
     const withCheck = new Set(
       DEADLINE_RULES.filter((r) => r.deadlineType === "verifica_elettrica").map(

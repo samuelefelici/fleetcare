@@ -16,8 +16,11 @@
 -- ruolo assente o sconosciuto non vede e non scrive niente.
 --
 -- I trigger che devono distinguere «lo scrive l'app» da «lo scrive un altro
--- trigger» usano pg_trigger_depth(), che l'app non può falsare (un flag di
--- sessione sì: lo imposterebbe chiunque).
+-- trigger» usano pg_trigger_depth(). Un flag di sessione non va: lo
+-- imposterebbe chiunque. pg_trigger_depth() l'app non lo può falsare solo
+-- perché non può creare trigger propri: nessun privilegio CREATE sugli
+-- schemi e niente tabelle temporanee (TEMP tolto qui sotto). Con un trigger
+-- su una tabella temporanea scriverebbe a profondità 2.
 --
 -- Indice:
 --   ruolo e grant · helper · updated_at · audit · contachilometri · login
@@ -43,9 +46,18 @@ alter default privileges in schema fleetcare
 revoke insert, update, delete on fleetcare.audit_logs from fleetcare_app;
 -- i tenant si leggono e si aggiornano, non si creano né cancellano dall'app
 revoke insert, delete on fleetcare.tenants from fleetcare_app;
--- i contatori li scrive solo il trigger che numera i documenti: un
--- contatore azzerato a mano farebbe fallire ogni segnalazione successiva
-revoke insert, update, delete on fleetcare.document_counters from fleetcare_app;
+-- i contatori li usa solo il trigger che numera i documenti: un contatore
+-- azzerato a mano farebbe fallire ogni segnalazione successiva, e letti
+-- direbbero all'equipaggio quanti interventi e sinistri ci sono stati
+revoke all on fleetcare.document_counters from fleetcare_app;
+-- niente oggetti temporanei: con una tabella temporanea e un trigger
+-- proprio l'app falserebbe pg_trigger_depth() (vedi in testa). Il database
+-- è dedicato (decisione 2): nessun altro ne ha bisogno.
+do $$
+begin
+  execute format('revoke temporary on database %I from public', current_database());
+end
+$$;
 alter role fleetcare_app set search_path = fleetcare, public;
 
 -- ---------- helper contesto ----------
@@ -151,8 +163,10 @@ create trigger trg_checklist_answers_audit after update or delete on fleetcare.c
 --  * prima di scrivere una lettura si valida: non nel futuro, non sotto
 --    una precedente (né sotto i km d'ingresso), non sopra una successiva,
 --    e senza salti impossibili (più di 2.000 km al giorno: è una cifra in
---    più, che bloccherebbe tutte le letture vere successive). Vale anche
---    per le correzioni, escludendo dal confronto la riga stessa;
+--    più, che bloccherebbe tutte le letture vere successive). La prima
+--    lettura si controlla contro i km d'ingresso se si sa di che giorno
+--    sono (initial_odometer_on): senza la data non c'è un riferimento.
+--    Vale anche per le correzioni, escludendo dal confronto la riga stessa;
 --  * dopo ogni scrittura o cancellazione il km del mezzo si ricalcola;
 --  * sul mezzo il km non si scrive a mano: si registra una lettura. E i km
 --    d'ingresso non salgono sopra una lettura già registrata.
@@ -168,6 +182,7 @@ declare
   v_before_at timestamptz;
   v_after int;
   v_initial int;
+  v_initial_on date;
 begin
   if new.read_at > now() + interval '10 minutes' then
     raise exception 'Lettura con data futura (%): controllare l''orologio del dispositivo', new.read_at
@@ -176,12 +191,14 @@ begin
 
   perform pg_advisory_xact_lock(hashtextextended('fleetcare.odometer:' || new.vehicle_id::text, 0));
 
-  select initial_odometer_km into v_initial from fleetcare.vehicles
+  select initial_odometer_km, initial_odometer_on into v_initial, v_initial_on from fleetcare.vehicles
    where id = new.vehicle_id and tenant_id = new.tenant_id;
+  -- la precedente: il km più alto e, a parità, la lettura più recente (il
+  -- salto si misura dall'ultima volta in cui il mezzo aveva quei km)
   select km, read_at into v_before, v_before_at from fleetcare.odometer_readings
    where tenant_id = new.tenant_id and vehicle_id = new.vehicle_id
      and read_at <= new.read_at and id <> new.id
-   order by km desc limit 1;
+   order by km desc, read_at desc limit 1;
   select min(km) into v_after from fleetcare.odometer_readings
    where tenant_id = new.tenant_id and vehicle_id = new.vehicle_id
      and read_at > new.read_at and id <> new.id;
@@ -199,6 +216,11 @@ begin
        2000 * greatest(1, ceil(extract(epoch from new.read_at - v_before_at) / 86400)) then
     raise exception 'Lettura di % km: % km in più dell''ultima (% km), non plausibile. Una cifra di troppo?',
       new.km, new.km - v_before, v_before using errcode = 'check_violation';
+  end if;
+  if v_before is null and v_initial_on is not null and new.km - v_initial >
+       2000 * greatest(1, (new.read_at at time zone 'Europe/Rome')::date - v_initial_on) then
+    raise exception 'Lettura di % km: % km in più dei km d''ingresso (% km del %), non plausibile. Una cifra di troppo?',
+      new.km, new.km - v_initial, v_initial, v_initial_on using errcode = 'check_violation';
   end if;
   return new;
 end
@@ -309,7 +331,11 @@ grant execute on function fleetcare.auth_find_profile(text, text) to fleetcare_a
 -- associazione e anno (di Roma), e ignora quello che manda il client. Se
 -- il numero lo scegliesse l'app, un utente potrebbe occupare i numeri
 -- futuri e far fallire ogni segnalazione successiva. Il numero non cambia
--- più. SECURITY DEFINER perché i contatori non sono scrivibili dall'app.
+-- più. Le cifre sono almeno cinque e crescono quando servono: un numero
+-- troncato a cinque cifre si ripeterebbe e bloccherebbe tutto. Nella
+-- numerazione possono restare buchi (un inserimento scartato da ON
+-- CONFLICT DO NOTHING consuma il numero): sono documenti interni, non
+-- fiscali. SECURITY DEFINER perché i contatori non sono accessibili all'app.
 create or replace function fleetcare.assign_document_number() returns trigger
   language plpgsql security definer set search_path = fleetcare, public as
 $$
@@ -329,7 +355,7 @@ begin
   on conflict (tenant_id, kind, year)
   do update set last_value = fleetcare.document_counters.last_value + 1
   returning last_value into v_value;
-  new.number := v_kind || '-' || v_year || '-' || lpad(v_value::text, 5, '0');
+  new.number := v_kind || '-' || v_year || '-' || lpad(v_value::text, greatest(5, length(v_value::text)), '0');
   return new;
 end
 $$;
@@ -527,10 +553,10 @@ create trigger trg_deadline_completions_check before insert or update
 --   * la prossima scadenza dell'ultimo adempimento valido (non «failed»).
 -- Così cancellare l'unico adempimento (o segnarlo fallito) riporta la
 -- scadenza alla base, e uno storico vecchio caricato dopo non riporta
--- indietro una scadenza più recente. Quando l'app scrive due_on, quel
--- valore diventa la nuova base; non può però scendere sotto ciò che
--- l'ultimo adempimento ha stabilito: quella data si corregge correggendo
--- l'adempimento.
+-- indietro una scadenza più recente. Quando l'app scrive due_on (o
+-- due_km), quel valore diventa la nuova base di quella dimensione, e solo
+-- di quella; non può però scendere sotto ciò che l'ultimo adempimento ha
+-- stabilito: quella data si corregge correggendo l'adempimento.
 create or replace function fleetcare.track_deadline_base() returns trigger
   language plpgsql as
 $$
@@ -556,13 +582,19 @@ begin
    where cc.tenant_id = new.tenant_id and cc.deadline_id = new.id and cc.outcome <> 'failed'
    order by cc.done_on desc, cc.created_at desc
    limit 1;
-  if found and ((new.due_on is not null and c.next_due_on is not null and new.due_on < c.next_due_on)
-                or (new.due_km is not null and c.next_due_km is not null and new.due_km < c.next_due_km)) then
+  if found and ((new.due_on is distinct from old.due_on and new.due_on < c.next_due_on)
+                or (new.due_km is distinct from old.due_km and new.due_km < c.next_due_km)) then
     raise exception 'La scadenza la fissa l''adempimento del %: si corregge correggendo quello', c.done_on
       using errcode = 'check_violation';
   end if;
-  new.base_due_on := new.due_on;
-  new.base_due_km := new.due_km;
+  -- la colonna non toccata vale ancora il valore effettivo (magari fissato
+  -- dall'adempimento): copiarla nella base lo renderebbe permanente
+  if new.due_on is distinct from old.due_on then
+    new.base_due_on := new.due_on;
+  end if;
+  if new.due_km is distinct from old.due_km then
+    new.base_due_km := new.due_km;
+  end if;
   new.due_on := greatest(new.base_due_on, c.next_due_on);
   new.due_km := greatest(new.base_due_km, c.next_due_km);
   return new;
@@ -592,6 +624,13 @@ begin
       select old.deadline_id, old.tenant_id where tg_op <> 'INSERT'
     ) x (deadline_id, tenant_id)
   loop
+    -- in fila sulla scadenza: due adempimenti registrati insieme non si
+    -- scavalcano (la lettura qui sotto, dopo l'attesa, vede l'altro). NO KEY
+    -- UPDATE e non UPDATE: non va in conflitto con il lock della chiave
+    -- esterna che l'inserimento dell'adempimento ha già preso
+    perform 1 from fleetcare.deadlines
+     where id = v_deadline and tenant_id = v_tenant
+       for no key update;
     select c.done_on, c.done_km, c.next_due_on, c.next_due_km into r
       from fleetcare.deadline_completions c
      where c.tenant_id = v_tenant and c.deadline_id = v_deadline and c.outcome <> 'failed'
@@ -756,6 +795,11 @@ declare
   v_checklist uuid := case when tg_op = 'DELETE' then old.checklist_id else new.checklist_id end;
   v_tenant uuid := case when tg_op = 'DELETE' then old.tenant_id else new.tenant_id end;
 begin
+  -- una risposta appartiene alla sua check-list: spostarla lascerebbe
+  -- sbagliate le anomalie in testata di quella di partenza
+  if tg_op = 'UPDATE' and new.checklist_id is distinct from old.checklist_id then
+    raise exception 'Una risposta non si sposta su un''altra check-list' using errcode = 'check_violation';
+  end if;
   select ch.submitted_at, ch.template_id into c from fleetcare.checklists ch
    where ch.id = v_checklist and ch.tenant_id = v_tenant
    for update;
@@ -863,6 +907,41 @@ $$;
 create trigger trg_attachments_entity before insert or update of entity_type, entity_id
   on fleetcare.attachments
   for each row execute function fleetcare.check_attachment_entity();
+
+-- Cancellato il documento, se ne vanno anche i suoi allegati: altrimenti
+-- resterebbero righe orfane che chi ha cancellato (un volontario con la
+-- propria bozza) non può togliere. Il file su MinIO lo rimuove un job
+-- dell'app che cerca i file senza riga. SECURITY DEFINER: chi può
+-- cancellare il documento può cancellarne gli allegati.
+create or replace function fleetcare.delete_entity_attachments() returns trigger
+  language plpgsql security definer set search_path = fleetcare, public as
+$$
+begin
+  delete from fleetcare.attachments a
+   where a.tenant_id = old.tenant_id
+     and a.entity_type = tg_argv[0]::fleetcare.attachment_entity
+     and a.entity_id = old.id;
+  return null;
+end
+$$;
+do $$
+declare r record;
+begin
+  for r in
+    select * from (values
+      ('vehicles', 'vehicle'), ('equipment', 'equipment'),
+      ('deadline_completions', 'deadline_completion'), ('maintenance_jobs', 'maintenance_job'),
+      ('fault_reports', 'fault_report'), ('accidents', 'accident'),
+      ('fuel_invoices', 'fuel_invoice'), ('checklists', 'checklist')
+    ) v (tbl, entity)
+  loop
+    execute format(
+      'create trigger trg_%1$s_attachments after delete on fleetcare.%1$I
+         for each row execute function fleetcare.delete_entity_attachments(%2$L)',
+      r.tbl, r.entity);
+  end loop;
+end
+$$;
 
 -- ============================================================
 -- NOTIFICHE

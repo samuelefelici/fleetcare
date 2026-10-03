@@ -218,6 +218,7 @@ CREATE TABLE "fleetcare"."vehicles" (
 	"useful_life_years" integer,
 	"bollo_exempt" boolean DEFAULT false NOT NULL,
 	"initial_odometer_km" integer DEFAULT 0 NOT NULL,
+	"initial_odometer_on" date,
 	"odometer_km" integer DEFAULT 0 NOT NULL,
 	"odometer_updated_at" timestamp with time zone,
 	"fuel_vehicle_code" text,
@@ -382,7 +383,8 @@ CREATE TABLE "fleetcare"."deadline_completions" (
 	"sanitization_id" uuid,
 	"notes" text,
 	"recorded_by_id" uuid NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "deadline_completions_dates_ck" CHECK ("fleetcare"."deadline_completions"."done_on" between '1900-01-01' and '2999-12-31' and "fleetcare"."deadline_completions"."next_due_on" between '1900-01-01' and '2999-12-31')
 );
 --> statement-breakpoint
 CREATE TABLE "fleetcare"."deadline_rules" (
@@ -463,7 +465,8 @@ CREATE TABLE "fleetcare"."deadlines" (
 	CONSTRAINT "deadlines_subject_ck" CHECK (("fleetcare"."deadlines"."vehicle_id" is not null) <> ("fleetcare"."deadlines"."equipment_id" is not null)),
 	CONSTRAINT "deadlines_interval_ck" CHECK (not ("fleetcare"."deadlines"."interval_months" is not null and "fleetcare"."deadlines"."interval_days" is not null)),
 	CONSTRAINT "deadlines_values_ck" CHECK ("fleetcare"."deadlines"."interval_months" > 0 and "fleetcare"."deadlines"."interval_days" > 0 and "fleetcare"."deadlines"."interval_km" > 0
-          and "fleetcare"."deadlines"."alert_days" >= 0 and "fleetcare"."deadlines"."alert_km" >= 0)
+          and "fleetcare"."deadlines"."alert_days" >= 0 and "fleetcare"."deadlines"."alert_km" >= 0),
+	CONSTRAINT "deadlines_dates_ck" CHECK ("fleetcare"."deadlines"."due_on" between '1900-01-01' and '2999-12-31' and "fleetcare"."deadlines"."base_due_on" between '1900-01-01' and '2999-12-31' and "fleetcare"."deadlines"."last_done_on" between '1900-01-01' and '2999-12-31')
 );
 --> statement-breakpoint
 CREATE TABLE "fleetcare"."kit_requirements" (
@@ -637,7 +640,8 @@ CREATE TABLE "fleetcare"."fuel_invoice_lines" (
 	"fuel_log_id" uuid,
 	"match_status" "fleetcare"."fuel_match_status" DEFAULT 'unmatched' NOT NULL,
 	"match_note" text,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "fuel_invoice_lines_dates_ck" CHECK ("fleetcare"."fuel_invoice_lines"."refueled_on" between '1900-01-01' and '2999-12-31')
 );
 --> statement-breakpoint
 CREATE TABLE "fleetcare"."fuel_invoices" (

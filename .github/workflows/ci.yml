@@ -61,11 +61,16 @@ jobs:
       - name: Test dei permessi (RLS)
         run: psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/rls.test.sql
 
+      # la tabella del §9 di docs/analisi-campi.md, cella per cella
+      - name: Matrice dei permessi
+        run: psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/matrix.test.sql
+
       - name: Test delle regole del database
         run: psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/rules.test.sql
 
-      # le regole scritte due volte (vista SQL e TypeScript) devono coincidere
-      - name: Parità database / TypeScript
+      # le regole scritte due volte (vista SQL e TypeScript) devono coincidere;
+      # e due adempimenti registrati insieme non si perdono
+      - name: Parità database / TypeScript e concorrenza
         run: pnpm test:db
 
       # un secondo seed non deve far risorgere ciò che l'associazione ha eliminato

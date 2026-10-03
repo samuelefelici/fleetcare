@@ -1,5 +1,5 @@
 {
-  "id": "dfed9f5b-ee4f-459c-828d-112f49e0d282",
+  "id": "a876d6e1-16cc-4ba8-9618-dcee36b10dd3",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -1710,6 +1710,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": 0
+        },
+        "initial_odometer_on": {
+          "name": "initial_odometer_on",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
         },
         "odometer_km": {
           "name": "odometer_km",
@@ -3765,7 +3771,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "deadline_completions_dates_ck": {
+          "name": "deadline_completions_dates_ck",
+          "value": "\"fleetcare\".\"deadline_completions\".\"done_on\" between '1900-01-01' and '2999-12-31' and \"fleetcare\".\"deadline_completions\".\"next_due_on\" between '1900-01-01' and '2999-12-31'"
+        }
+      },
       "isRLSEnabled": false
     },
     "fleetcare.deadline_rules": {
@@ -4565,6 +4576,10 @@
         "deadlines_values_ck": {
           "name": "deadlines_values_ck",
           "value": "\"fleetcare\".\"deadlines\".\"interval_months\" > 0 and \"fleetcare\".\"deadlines\".\"interval_days\" > 0 and \"fleetcare\".\"deadlines\".\"interval_km\" > 0\n          and \"fleetcare\".\"deadlines\".\"alert_days\" >= 0 and \"fleetcare\".\"deadlines\".\"alert_km\" >= 0"
+        },
+        "deadlines_dates_ck": {
+          "name": "deadlines_dates_ck",
+          "value": "\"fleetcare\".\"deadlines\".\"due_on\" between '1900-01-01' and '2999-12-31' and \"fleetcare\".\"deadlines\".\"base_due_on\" between '1900-01-01' and '2999-12-31' and \"fleetcare\".\"deadlines\".\"last_done_on\" between '1900-01-01' and '2999-12-31'"
         }
       },
       "isRLSEnabled": false
@@ -6645,7 +6660,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "fuel_invoice_lines_dates_ck": {
+          "name": "fuel_invoice_lines_dates_ck",
+          "value": "\"fleetcare\".\"fuel_invoice_lines\".\"refueled_on\" between '1900-01-01' and '2999-12-31'"
+        }
+      },
       "isRLSEnabled": false
     },
     "fleetcare.fuel_invoices": {

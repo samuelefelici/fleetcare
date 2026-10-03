@@ -121,6 +121,12 @@ export const vehicles = fleetcareSchema.table(
     /** km all'ingresso in flotta: la base delle letture quando non ce n'è nessuna */
     initialOdometerKm: integer("initial_odometer_km").notNull().default(0),
     /**
+     * Il giorno a cui si riferiscono i km d'ingresso. Se è noto, la prima
+     * lettura si controlla anche per i salti impossibili (una cifra di
+     * troppo); se manca (mezzo caricato senza sapere quando) no.
+     */
+    initialOdometerOn: date("initial_odometer_on"),
+    /**
      * Km attuali: **derivati**, li scrive solo il trigger su
      * `odometer_readings` (l'ultima lettura, o i km iniziali). Una scrittura
      * diretta viene rifiutata: il km si cambia inserendo una lettura.

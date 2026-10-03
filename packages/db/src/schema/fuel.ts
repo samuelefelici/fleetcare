@@ -12,7 +12,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { fleetcareSchema, tenantFk, tenantKey } from "./_schema";
+import { calendarDates, fleetcareSchema, tenantFk, tenantKey } from "./_schema";
 import { profiles, suppliers, tenants } from "./core";
 import { fuelInvoiceStatus, fuelMatchStatus, fuelProduct } from "./enums";
 import { vehicles } from "./vehicles";
@@ -175,6 +175,7 @@ export const fuelInvoiceLines = fleetcareSchema.table(
       .on(t.fuelLogId)
       .where(sql`${t.fuelLogId} is not null`),
     index("fuel_invoice_lines_vehicle_idx").on(t.tenantId, t.vehicleId, t.refueledOn),
+    calendarDates("fuel_invoice_lines_dates_ck", t.refueledOn),
     tenantFk("fuel_invoice_lines_invoice_id_fk", t.tenantId, t.invoiceId, fuelInvoices, "cascade"),
     tenantFk("fuel_invoice_lines_vehicle_id_fk", t.tenantId, t.vehicleId, vehicles),
     tenantFk("fuel_invoice_lines_fuel_log_id_fk", t.tenantId, t.fuelLogId, fuelLogs),

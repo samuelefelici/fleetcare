@@ -23,9 +23,11 @@ packages/db                     @fleetcare/db
   migrations/0000_init.sql      generata da drizzle-kit
   migrations/0001_rls_and_functions.sql   ruolo app, RLS, audit, regole del database, vista
                                 delle scadenze effettive, login, numerazione
-  tests/                        Vitest (dominio + catalogo), rls.test.sql (permessi),
-                                rules.test.sql (regole del database), effective.dbtest.ts
-                                (parità fra database e TypeScript)
+  tests/                        Vitest (dominio + catalogo), rls.test.sql (permessi, casi
+                                fini), matrix.test.sql (la matrice dei permessi, cella per
+                                cella), rules.test.sql (regole del database),
+                                effective.dbtest.ts (parità fra database e TypeScript),
+                                concurrency.dbtest.ts (scritture concorrenti)
 docs/analisi-campi.md           l'analisi
 ```
 
@@ -56,10 +58,12 @@ pnpm typecheck     # tsc strict
 pnpm test          # Vitest: scadenze, abbinamento carburante, coerenza del catalogo
 
 # su un DB migrato, con il ruolo applicativo vero; chiudono con ROLLBACK:
-psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/rls.test.sql    # permessi
-psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/rules.test.sql  # regole
+psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/rls.test.sql     # permessi
+psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/matrix.test.sql  # matrice §9
+psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/rules.test.sql   # regole
 pnpm test:db       # la vista delle scadenze, la prossima scadenza e i codici dei mezzi
-                   # calcolati dal database coincidono con il TypeScript
+                   # calcolati dal database coincidono con il TypeScript; adempimenti
+                   # registrati insieme non si perdono
 ```
 
 La CI esegue tutto questo su un Postgres vero, più due controlli: lo schema non
@@ -73,16 +77,20 @@ ciò che è stato cancellato.
 3. SQL non esprimibile in Drizzle (policy, trigger, funzioni):
    `pnpm --filter @fleetcare/db exec drizzle-kit generate --custom --name <nome>`.
 
-Due regole per ogni tabella nuova dell'associazione:
+Tre regole per ogni tabella nuova dell'associazione:
 
 - **riferimenti con `tenantFk`**, mai `.references()` verso un'altra tabella
   dell'associazione, e `tenantKey` sulla tabella se altre la referenziano: la
   chiave composta `(tenant_id, id)` impedisce di puntare ai dati di un'altra
   associazione (vedi `src/schema/_schema.ts`);
-- **RLS e isolamento nella sua migration**: la 0001 li applica alle tabelle che
-  esistono quando gira. Se ci si dimentica, `rls.test.sql` fallisce: controlla
-  che ogni tabella abbia RLS attiva e una policy `tenant_isolation` scritta
-  giusta, e che non ci siano altre policy permissive.
+- **RLS, isolamento e `known_role` nella sua migration**: la 0001 li applica
+  alle tabelle che esistono quando gira. Se ci si dimentica, `rls.test.sql`
+  fallisce: controlla che ogni tabella abbia RLS attiva, una policy
+  `tenant_isolation` e una `known_role` scritte giuste, e che non ci siano
+  altre policy permissive;
+- **una riga nella matrice** di `tests/matrix.test.sql` (chi legge, inserisce,
+  modifica, cancella) e nel §9 di `docs/analisi-campi.md`: il test fallisce
+  per una tabella che non ce l'ha.
 
 ## Sicurezza
 

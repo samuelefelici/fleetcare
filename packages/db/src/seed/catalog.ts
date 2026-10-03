@@ -449,8 +449,9 @@ export const DEADLINE_RULES: DeadlineRuleSeed[] = [
     { deadlineType: "manutenzione_fabbricante" },
     { deadlineType: "fine_vita" },
   ]),
-  ...["barella_cucchiaio", "tavola_spinale", "materasso_depressione", "ked"].flatMap((code) =>
-    forEquipment(code, [{ deadlineType: "manutenzione_fabbricante" }]),
+  // presidi e piccoli dispositivi: la manutenzione del fabbricante, non bloccante
+  ...["barella_cucchiaio", "tavola_spinale", "materasso_depressione", "ked", "saturimetro"].flatMap(
+    (code) => forEquipment(code, [{ deadlineType: "manutenzione_fabbricante" }]),
   ),
   ...forEquipment("estintore_polvere", [
     { deadlineType: "controllo_estintore" },

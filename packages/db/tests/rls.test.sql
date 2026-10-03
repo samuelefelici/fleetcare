@@ -44,6 +44,19 @@ begin
     from pg_policies
    where schemaname = 'fleetcare' and permissive = 'PERMISSIVE' and policyname <> 'tenant_isolation';
   assert missing is null, 'policy permissive oltre l''isolamento: ' || missing;
+
+  -- e su ogni tabella la restrittiva che chiude a un ruolo assente o sconosciuto
+  select string_agg(c.relname, ', ') into missing
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'fleetcare' and c.relkind = 'r'
+     and not exists (
+           select 1 from pg_policies p
+            where p.schemaname = 'fleetcare' and p.tablename = c.relname
+              and p.policyname = 'known_role' and p.permissive = 'RESTRICTIVE'
+              and p.cmd = 'ALL' and p.roles = '{fleetcare_app}'
+              and p.qual = 'fleetcare.app_has_role(VARIADIC ARRAY[''crew''::text, ''fleet_manager''::text, ''equipment_manager''::text, ''admin_finance''::text, ''admin''::text])'
+              and p.with_check = p.qual);
+  assert missing is null, 'tabelle senza known_role (o scritta diversa): ' || missing;
 end $$;
 
 -- ---------- dati di prova (ruolo owner, fuori dalla RLS) ----------
@@ -92,6 +105,11 @@ insert into fleetcare.checklists (id, tenant_id, vehicle_id, template_id, perfor
   ('a0000000-0000-0000-0000-00000000b401', 'a0000000-0000-0000-0000-000000000000',
    'a0000000-0000-0000-0000-00000000d001', 'a0000000-0000-0000-0000-00000000b301',
    'a0000000-0000-0000-0000-00000000c002');
+
+-- una segnalazione del secondo volontario
+insert into fleetcare.fault_reports (id, tenant_id, vehicle_id, description, severity, reported_by_id) values
+  ('a0000000-0000-0000-0000-00000000b903', 'a0000000-0000-0000-0000-000000000000',
+   'a0000000-0000-0000-0000-00000000d001', 'Cassetto rotto', 'green', 'a0000000-0000-0000-0000-00000000c002');
 
 -- una segnalazione del primo volontario, con una nota interna e una risposta pubblica
 insert into fleetcare.fault_reports (id, tenant_id, number, vehicle_id, description, severity, reported_by_id) values
@@ -235,6 +253,26 @@ begin
     raise exception 'FAIL crew: sanificazione periodica chiusa senza nessuna sanificazione';
   exception when insufficient_privilege then null;
   end;
+  -- una propria sanificazione valida, ma l'adempimento a nome di un collega
+  insert into fleetcare.sanitizations (id, tenant_id, vehicle_id, kind, performed_by_id)
+  values ('a0000000-0000-0000-0000-00000000b702', 'a0000000-0000-0000-0000-000000000000',
+          'a0000000-0000-0000-0000-00000000d001', 'periodic', 'a0000000-0000-0000-0000-00000000c001');
+  begin
+    insert into fleetcare.deadline_completions (tenant_id, deadline_id, done_on, sanitization_id, recorded_by_id)
+    values ('a0000000-0000-0000-0000-000000000000', 'a0000000-0000-0000-0000-00000000cb04', '2026-10-01',
+            'a0000000-0000-0000-0000-00000000b702', 'a0000000-0000-0000-0000-00000000c002');
+    raise exception 'FAIL crew: adempimento registrato a nome di un collega';
+  exception when insufficient_privilege then null;
+  end;
+  -- inviata la propria check-list, non le si allega più niente
+  update fleetcare.checklists set submitted_at = now() where id = 'a0000000-0000-0000-0000-00000000b402';
+  begin
+    insert into fleetcare.attachments (tenant_id, entity_type, entity_id, file_name, mime_type, size_bytes, storage_path, uploaded_by_id)
+    values ('a0000000-0000-0000-0000-000000000000', 'checklist', 'a0000000-0000-0000-0000-00000000b402',
+            'x.jpg', 'image/jpeg', 1, 'x/x.jpg', 'a0000000-0000-0000-0000-00000000c001');
+    raise exception 'FAIL crew: allegato a una check-list già inviata';
+  exception when insufficient_privilege then null;
+  end;
 
   update fleetcare.profile_accounts set phone = '333 9' where profile_id = 'a0000000-0000-0000-0000-00000000c001';
   get diagnostics n = row_count;
@@ -312,6 +350,13 @@ begin
   end;
   begin
     insert into fleetcare.attachments (tenant_id, entity_type, entity_id, file_name, mime_type, size_bytes, storage_path, uploaded_by_id)
+    values ('a0000000-0000-0000-0000-000000000000', 'fault_report', 'a0000000-0000-0000-0000-00000000b903',
+            'x.jpg', 'image/jpeg', 1, 'x/x.jpg', 'a0000000-0000-0000-0000-00000000c001');
+    raise exception 'FAIL crew: allegato alla segnalazione di un altro';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    insert into fleetcare.attachments (tenant_id, entity_type, entity_id, file_name, mime_type, size_bytes, storage_path, uploaded_by_id)
     values ('a0000000-0000-0000-0000-000000000000', 'fault_report', 'a0000000-0000-0000-0000-00000000b101',
             'x.jpg', 'image/jpeg', 1, 'x/x.jpg', 'a0000000-0000-0000-0000-00000000c001');
     raise exception 'FAIL crew: allegato «segnalazione» con l''id di una fattura';
@@ -358,7 +403,7 @@ begin
   values ('a0000000-0000-0000-0000-00000000b902', 'a0000000-0000-0000-0000-000000000000', 'SGN-2026-99999',
           'a0000000-0000-0000-0000-00000000d001', 'Numero scelto da me', 'green', 'a0000000-0000-0000-0000-00000000c001');
   assert (select number from fleetcare.fault_reports where id = 'a0000000-0000-0000-0000-00000000b902')
-         = 'SGN-' || extract(year from now() at time zone 'Europe/Rome')::int || '-00003',
+         = 'SGN-' || extract(year from now() at time zone 'Europe/Rome')::int || '-00004',
     'numerazione: il database ignora il numero del client e assegna il successivo';
   begin
     insert into fleetcare.fault_reports (tenant_id, vehicle_id, description, severity, reported_by_id, status)
@@ -399,9 +444,18 @@ begin
 end $$;
 
 -- ================= un segnale rosso avvisa i responsabili, da solo =================
-insert into fleetcare.fault_reports (tenant_id, number, vehicle_id, description, severity, unsafe, reported_by_id) values
+insert into fleetcare.fault_reports (tenant_id, number, vehicle_id, description, severity, unsafe, area, reported_by_id) values
   ('a0000000-0000-0000-0000-000000000000', 'SGN-2026-00003', 'a0000000-0000-0000-0000-00000000d001',
-   'Freni che non tengono', 'red', true, 'a0000000-0000-0000-0000-00000000c001');
+   'Freni che non tengono', 'red', false, 'mechanical', 'a0000000-0000-0000-0000-00000000c001'),
+  -- gialla, ma «il mezzo non è sicuro»: avvisa lo stesso
+  ('a0000000-0000-0000-0000-000000000000', '', 'a0000000-0000-0000-0000-00000000d001',
+   'Portellone che si apre in marcia', 'yellow', true, 'bodywork', 'a0000000-0000-0000-0000-00000000c001'),
+  -- un'attrezzatura: avvisa anche il responsabile del materiale
+  ('a0000000-0000-0000-0000-000000000000', '', 'a0000000-0000-0000-0000-00000000d001',
+   'Aspiratore che non aspira', 'red', false, 'equipment', 'a0000000-0000-0000-0000-00000000c001'),
+  -- gialla e sicura: nessun avviso
+  ('a0000000-0000-0000-0000-000000000000', '', 'a0000000-0000-0000-0000-00000000d001',
+   'Graffio sulla fiancata', 'yellow', false, 'bodywork', 'a0000000-0000-0000-0000-00000000c001');
 
 -- ================= ruolo assente o sconosciuto: si chiude, non si apre =================
 set app.role = 'qualcosa';
@@ -428,8 +482,10 @@ set app.role = 'fleet_manager';
 do $$
 declare n int;
 begin
-  assert (select count(*) from fleetcare.notifications where kind = 'fault_red') = 1,
-    'segnalazione rossa: il responsabile mezzi riceve l''avviso dal database';
+  assert (select count(*) from fleetcare.notifications where kind = 'fault_red') = 3,
+    'segnalazione rossa o «non sicuro»: il responsabile mezzi riceve l''avviso dal database';
+  assert not exists (select 1 from fleetcare.notifications where body like 'Graffio%'),
+    'segnalazione gialla e sicura: nessun avviso';
   assert (select count(*) from fleetcare.fuel_invoices) = 1, 'fleet_manager: legge le fatture per verificarle';
   assert (select count(*) from fleetcare.maintenance_jobs) = 1, 'fleet_manager: legge gli interventi';
   assert (select count(*) from fleetcare.attachments) = 5, 'fleet_manager: legge tutti gli allegati';
@@ -540,8 +596,8 @@ set app.role = 'equipment_manager';
 do $$
 declare n int;
 begin
-  assert (select count(*) from fleetcare.notifications) = 0,
-    'equipment_manager: un guasto ai freni non è affar suo, nessun avviso';
+  assert (select string_agg(body, ',') from fleetcare.notifications) = 'Aspiratore che non aspira',
+    'equipment_manager: avvisato per l''attrezzatura, non per freni e portellone';
   insert into fleetcare.equipment_types (id, tenant_id, code, label, "group")
   values ('a0000000-0000-0000-0000-00000000b601', 'a0000000-0000-0000-0000-000000000000', 'dae', 'DAE', 'electromedical');
   insert into fleetcare.equipment (tenant_id, equipment_type_id, vehicle_id, serial_number)
@@ -592,8 +648,8 @@ set app.user_id = 'a0000000-0000-0000-0000-00000000ad01';
 set app.role = 'admin';
 
 do $$ begin
-  assert (select count(*) from fleetcare.notifications where kind = 'fault_red') = 1,
-    'segnalazione rossa: anche la direzione riceve l''avviso';
+  assert (select count(*) from fleetcare.notifications where kind = 'fault_red') = 3,
+    'segnalazione rossa o «non sicuro»: anche la direzione riceve l''avviso';
   assert (select count(*) from fleetcare.profile_accounts) = 3, 'admin: gestisce i recapiti di tutti';
   insert into fleetcare.profile_accounts (profile_id, tenant_id, email)
   values ('a0000000-0000-0000-0000-00000000e001', 'a0000000-0000-0000-0000-000000000000', 'materiale@a.it');

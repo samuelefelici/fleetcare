@@ -11,7 +11,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { fleetcareSchema, tenantFk, tenantKey } from "./_schema";
+import { calendarDates, fleetcareSchema, tenantFk, tenantKey } from "./_schema";
 import { profiles, suppliers, tenants } from "./core";
 import { completionOutcome, deadlineSubject, ownershipKind, vehicleCategory } from "./enums";
 import { equipment, equipmentTypes } from "./equipment";
@@ -299,6 +299,7 @@ export const deadlines = fleetcareSchema.table(
       sql`${t.intervalMonths} > 0 and ${t.intervalDays} > 0 and ${t.intervalKm} > 0
           and ${t.alertDays} >= 0 and ${t.alertKm} >= 0`,
     ),
+    calendarDates("deadlines_dates_ck", t.dueOn, t.baseDueOn, t.lastDoneOn),
     tenantFk("deadlines_deadline_type_id_fk", t.tenantId, t.deadlineTypeId, deadlineTypes),
     tenantFk("deadlines_vehicle_id_fk", t.tenantId, t.vehicleId, vehicles, "cascade"),
     tenantFk("deadlines_equipment_id_fk", t.tenantId, t.equipmentId, equipment, "cascade"),
@@ -348,7 +349,8 @@ export const deadlineCompletions = fleetcareSchema.table(
   },
   (t) => [
     index("deadline_completions_deadline_idx").on(t.tenantId, t.deadlineId, t.doneOn),
-    /* una sanificazione chiude la scadenza una volta sola */
+    calendarDates("deadline_completions_dates_ck", t.doneOn, t.nextDueOn),
+    /* una sanificazione chiude la stessa scadenza una volta sola */
     uniqueIndex("deadline_completions_sanitization_uq")
       .on(t.deadlineId, t.sanitizationId)
       .where(sql`${t.sanitizationId} is not null`),

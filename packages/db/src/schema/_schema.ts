@@ -1,4 +1,5 @@
-import { foreignKey, pgSchema, unique, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { check, foreignKey, pgSchema, unique, type AnyPgColumn } from "drizzle-orm/pg-core";
 
 /**
  * Tutto FleetCare vive nello schema Postgres `fleetcare`, non in `public`.
@@ -52,4 +53,20 @@ export function tenantFk(
     foreignColumns: [parent.tenantId, parent.id],
   });
   return onDelete ? fk.onDelete(onDelete) : fk;
+}
+
+/**
+ * Date che il motore delle scadenze sa leggere: fra il 1900 e il 2999. Il
+ * database accetterebbe anche l'anno 26 di un errore di battitura o
+ * 'infinity', ma `parse` di src/domain/deadlines.ts li rifiuta e la pagina
+ * dello scadenzario andrebbe in errore. Una colonna nulla passa.
+ */
+export function calendarDates(name: string, ...columns: AnyPgColumn[]) {
+  return check(
+    name,
+    sql.join(
+      columns.map((c) => sql`${c} between '1900-01-01' and '2999-12-31'`),
+      sql` and `,
+    ),
+  );
 }

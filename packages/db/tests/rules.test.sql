@@ -131,6 +131,41 @@ do $$ begin
   update fleetcare.vehicles set initial_odometer_km = 50500 where id = 'a0000000-0000-0000-0000-00000000d001';
   assert (select odometer_km from fleetcare.vehicles where id = 'a0000000-0000-0000-0000-00000000d001') = 50500,
     'odometro: senza letture, correggere i km d''ingresso corregge il mezzo';
+
+  -- mezzo fermo un mese (stesso km): il salto si misura dall'ultima lettura, non dalla prima
+  insert into fleetcare.odometer_readings (id, tenant_id, vehicle_id, km, read_at, recorded_by_id) values
+    ('a0000000-0000-0000-0000-00000000b803', 'a0000000-0000-0000-0000-000000000000',
+     'a0000000-0000-0000-0000-00000000d001', 51000, '2026-08-01 08:00+02', 'a0000000-0000-0000-0000-00000000f001'),
+    ('a0000000-0000-0000-0000-00000000b804', 'a0000000-0000-0000-0000-000000000000',
+     'a0000000-0000-0000-0000-00000000d001', 51000, '2026-09-05 08:00+02', 'a0000000-0000-0000-0000-00000000f001');
+  begin
+    insert into fleetcare.odometer_readings (tenant_id, vehicle_id, km, read_at, recorded_by_id)
+    values ('a0000000-0000-0000-0000-000000000000', 'a0000000-0000-0000-0000-00000000d001', 57000,
+            '2026-09-06 08:00+02', 'a0000000-0000-0000-0000-00000000f001');
+    raise exception 'FAIL odometro: 6.000 km in un giorno dopo un mese fermo';
+  exception when check_violation then null;
+  end;
+  delete from fleetcare.odometer_readings
+   where id in ('a0000000-0000-0000-0000-00000000b803', 'a0000000-0000-0000-0000-00000000b804');
+
+  -- la prima lettura, quando si sa di che giorno sono i km d'ingresso
+  update fleetcare.vehicles set initial_odometer_km = 85000, initial_odometer_on = '2026-09-01'
+   where id = 'a0000000-0000-0000-0000-00000000d002';
+  begin
+    insert into fleetcare.odometer_readings (tenant_id, vehicle_id, km, read_at, recorded_by_id)
+    values ('a0000000-0000-0000-0000-000000000000', 'a0000000-0000-0000-0000-00000000d002', 850000,
+            '2026-09-02 08:00+02', 'a0000000-0000-0000-0000-00000000f001');
+    raise exception 'FAIL odometro: prima lettura con una cifra di troppo';
+  exception when check_violation then null;
+  end;
+  insert into fleetcare.odometer_readings (id, tenant_id, vehicle_id, km, read_at, recorded_by_id)
+  values ('a0000000-0000-0000-0000-00000000b805', 'a0000000-0000-0000-0000-000000000000',
+          'a0000000-0000-0000-0000-00000000d002', 87000, '2026-09-02 08:00+02', 'a0000000-0000-0000-0000-00000000f001');
+  assert (select odometer_km from fleetcare.vehicles where id = 'a0000000-0000-0000-0000-00000000d002') = 87000,
+    'odometro: 2.000 km dal giorno dei km d''ingresso si accettano';
+  delete from fleetcare.odometer_readings where id = 'a0000000-0000-0000-0000-00000000b805';
+  update fleetcare.vehicles set initial_odometer_km = 0, initial_odometer_on = null
+   where id = 'a0000000-0000-0000-0000-00000000d002';
 end $$;
 
 -- ================= numerazione dei documenti =================
@@ -159,6 +194,39 @@ begin
     raise exception 'FAIL numerazione: contatori scritti dall''app';
   exception when insufficient_privilege then null;
   end;
+  begin
+    perform 1 from fleetcare.document_counters;
+    raise exception 'FAIL numerazione: contatori letti dall''app (quanti sinistri nell''anno)';
+  exception when insufficient_privilege then null;
+  end;
+  -- pg_trigger_depth() è una prova solo se l'app non può creare trigger propri
+  begin
+    create temporary table furbo (x int);
+    raise exception 'FAIL: l''app crea tabelle temporanee (e con un trigger falserebbe pg_trigger_depth)';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+
+-- oltre 99.999 le cifre crescono: un numero troncato si ripeterebbe e
+-- bloccherebbe tutte le segnalazioni successive
+reset role;
+update fleetcare.document_counters set last_value = 99999
+ where tenant_id = 'a0000000-0000-0000-0000-000000000000' and kind = 'MAN';
+set role fleetcare_app;
+do $$
+declare
+  y text := extract(year from now() at time zone 'Europe/Rome')::int::text;
+  n1 text;
+  n2 text;
+begin
+  insert into fleetcare.maintenance_jobs (tenant_id, vehicle_id, kind, title)
+  values ('a0000000-0000-0000-0000-000000000000', 'a0000000-0000-0000-0000-00000000d001', 'tyres', 'Gomme')
+  returning number into n1;
+  insert into fleetcare.maintenance_jobs (tenant_id, vehicle_id, kind, title)
+  values ('a0000000-0000-0000-0000-000000000000', 'a0000000-0000-0000-0000-00000000d001', 'tyres', 'Gomme')
+  returning number into n2;
+  assert (n1, n2) = ('MAN-' || y || '-100000', 'MAN-' || y || '-100001'),
+    'numerazione: dopo 99.999 si va a sei cifre, senza ripetere';
 end $$;
 
 -- ================= check-list: bozza → inviata =================
@@ -169,7 +237,10 @@ insert into fleetcare.checklist_template_items (id, tenant_id, template_id, sect
   ('a0000000-0000-0000-0000-00000000b311', 'a0000000-0000-0000-0000-000000000000',
    'a0000000-0000-0000-0000-00000000b301', 'Ossigeno', 'Pressione O2', 'number', 'bar', 50, true),
   ('a0000000-0000-0000-0000-00000000b312', 'a0000000-0000-0000-0000-000000000000',
-   'a0000000-0000-0000-0000-00000000b301', 'Mezzo', 'Luci', 'check', null, null, false);
+   'a0000000-0000-0000-0000-00000000b301', 'Mezzo', 'Luci', 'check', null, null, false),
+  -- resta senza risposta: serve a provare una risposta aggiunta dopo l'invio
+  ('a0000000-0000-0000-0000-00000000b313', 'a0000000-0000-0000-0000-000000000000',
+   'a0000000-0000-0000-0000-00000000b301', 'Mezzo', 'Gomme', 'check', null, null, false);
 
 set role fleetcare_app;
 set app.user_id = 'a0000000-0000-0000-0000-00000000c001';
@@ -207,9 +278,9 @@ begin
   begin
     insert into fleetcare.checklist_answers (tenant_id, checklist_id, template_item_id, outcome)
     values ('a0000000-0000-0000-0000-000000000000', 'a0000000-0000-0000-0000-00000000b401',
-            'a0000000-0000-0000-0000-00000000b312', 'anomaly');
+            'a0000000-0000-0000-0000-00000000b313', 'anomaly');
     raise exception 'FAIL check-list: risposta aggiunta dopo l''invio';
-  exception when insufficient_privilege or unique_violation then null;
+  exception when insufficient_privilege then null;
   end;
   update fleetcare.checklist_answers set outcome = 'ok';
   get diagnostics n = row_count;
@@ -224,6 +295,21 @@ begin
     raise exception 'FAIL check-list: nata già inviata';
   exception when check_violation then null;
   end;
+end $$;
+
+-- cancellata la propria bozza, se ne vanno anche gli allegati (non restano
+-- righe orfane che il volontario non potrebbe togliere)
+insert into fleetcare.checklists (id, tenant_id, vehicle_id, template_id, performed_by_id) values
+  ('a0000000-0000-0000-0000-00000000b402', 'a0000000-0000-0000-0000-000000000000',
+   'a0000000-0000-0000-0000-00000000d001', 'a0000000-0000-0000-0000-00000000b301',
+   'a0000000-0000-0000-0000-00000000c001');
+insert into fleetcare.attachments (tenant_id, entity_type, entity_id, file_name, mime_type, size_bytes, storage_path, uploaded_by_id) values
+  ('a0000000-0000-0000-0000-000000000000', 'checklist', 'a0000000-0000-0000-0000-00000000b402',
+   'luce.jpg', 'image/jpeg', 1, 'x/luce.jpg', 'a0000000-0000-0000-0000-00000000c001');
+delete from fleetcare.checklists where id = 'a0000000-0000-0000-0000-00000000b402';
+do $$ begin
+  assert (select count(*) from fleetcare.attachments where entity_id = 'a0000000-0000-0000-0000-00000000b402') = 0,
+    'allegati: cancellata la bozza, i suoi allegati se ne vanno con lei';
 end $$;
 
 -- una voce usata non si riscrive: si disattiva
@@ -271,6 +357,12 @@ do $$ begin
     'check-list: corretta la risposta, le anomalie in testata si ricalcolano';
   assert exists (select 1 from fleetcare.audit_logs where table_name = 'checklist_answers' and action = 'UPDATE'),
     'check-list: la correzione della direzione resta nell''audit';
+  begin
+    update fleetcare.checklist_answers set checklist_id = gen_random_uuid()
+     where checklist_id = 'a0000000-0000-0000-0000-00000000b401';
+    raise exception 'FAIL check-list: una risposta spostata su un''altra check-list';
+  exception when check_violation then null;
+  end;
 end $$;
 
 -- ================= scadenze: coerenza, valori effettivi, adempimenti =================
@@ -311,6 +403,20 @@ do $$ begin
     insert into fleetcare.deadline_types (tenant_id, code, label, subject, interval_months, renew_from_due, completed_by_crew)
     values ('a0000000-0000-0000-0000-000000000000', 'x', 'X', 'vehicle', 12, true, true);
     raise exception 'FAIL: tipo chiuso dall''equipaggio con il rinnovo dalla scadenza';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into fleetcare.deadlines (tenant_id, deadline_type_id, vehicle_id, label, due_on)
+    values ('a0000000-0000-0000-0000-000000000000', 'a0000000-0000-0000-0000-00000000ca01',
+            'a0000000-0000-0000-0000-00000000d001', 'refuso', '0026-10-03');
+    raise exception 'FAIL: scadenza nell''anno 26 (il motore TypeScript non la legge)';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into fleetcare.deadlines (tenant_id, deadline_type_id, vehicle_id, label, due_on)
+    values ('a0000000-0000-0000-0000-000000000000', 'a0000000-0000-0000-0000-00000000ca01',
+            'a0000000-0000-0000-0000-00000000d001', 'infinito', 'infinity');
+    raise exception 'FAIL: scadenza «infinity»';
   exception when check_violation then null;
   end;
   begin
@@ -487,9 +593,15 @@ do $$ begin
           'failed', 'a0000000-0000-0000-0000-00000000f001');
   assert (select due_on from fleetcare.deadlines where id = 'a0000000-0000-0000-0000-00000000cb03') = '2027-09-15',
     'base: un adempimento fallito non sposta la scadenza';
+  -- si corregge solo il km: la data resta quella dell'adempimento e la sua base non cambia
+  update fleetcare.deadlines set due_km = 60000 where id = 'a0000000-0000-0000-0000-00000000cb03';
+  assert (select (due_on, due_km, base_due_on, base_due_km) from fleetcare.deadlines
+          where id = 'a0000000-0000-0000-0000-00000000cb03')
+         = ('2027-09-15'::date, 60000, '2026-12-01'::date, 60000),
+    'base: correggere i km non copia nella base la data fissata dall''adempimento';
   delete from fleetcare.deadline_completions where id = 'a0000000-0000-0000-0000-00000000cc11';
   assert (select (due_on, due_km, last_done_on) from fleetcare.deadlines where id = 'a0000000-0000-0000-0000-00000000cb03')
-         is not distinct from ('2026-12-01'::date, 40000, null::date),
+         is not distinct from ('2026-12-01'::date, 60000, null::date),
     'base: cancellato l''unico adempimento valido, la scadenza torna alla base';
 end $$;
 

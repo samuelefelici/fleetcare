@@ -98,6 +98,11 @@ describe("grossAmount", () => {
     expect(grossAmount(64.98, 22, false)).toBe(79.28);
     expect(grossAmount(79.28, 22, true)).toBe(79.28);
   });
+  it("il mezzo centesimo va per eccesso, anche quando la virgola mobile dice …4999", () => {
+    expect(grossAmount(28.75, 22, false)).toBe(35.08); // 35,075
+    expect(grossAmount(1.005, 22, true)).toBe(1.01);
+    expect(grossAmount(10, 10, false)).toBe(11);
+  });
 });
 
 describe("reconcileFuel", () => {
@@ -225,6 +230,25 @@ describe("reconcileFuel", () => {
     ];
     const r = reconcileFuel([line("L", { receiptNumber: "5", refueledOn: "2026-09-10" })], logs);
     expect(r.lines[0]?.fuelLogId).toBe("oggi");
+  });
+
+  it("buono ripetuto in giorni vicini, due righe e due pieni: si abbinano tutti", () => {
+    // A (11/9) può andare con X (10/9) o Y (11/9); B (12/9) solo con Y. Prendere
+    // per prima la coppia più vicina (A-Y, stesso giorno) lascerebbe B e X orfani.
+    const lines = [
+      line("A", { vehicleId: null, receiptNumber: "5", refueledOn: "2026-09-11" }),
+      line("B", { vehicleId: null, receiptNumber: "5", refueledOn: "2026-09-12" }),
+    ];
+    const logs = [
+      log("X", { receiptNumber: "5", refueledOn: "2026-09-10" }),
+      log("Y", { receiptNumber: "5", refueledOn: "2026-09-11" }),
+    ];
+    const r = reconcileFuel(lines, logs);
+    expect(r.lines.map((l) => [l.lineId, l.status, l.fuelLogId])).toEqual([
+      ["A", "matched", "X"],
+      ["B", "matched", "Y"],
+    ]);
+    expect(r.unbilledLogIds).toEqual([]);
   });
 
   it("stesso buono senza litri né importo da confrontare: abbinata, con il motivo detto", () => {

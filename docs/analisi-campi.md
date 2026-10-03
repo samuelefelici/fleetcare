@@ -113,7 +113,7 @@ omologazione. I campi di `vehicles` sono raggruppati così.
 | Allestimento | allestitore, data, n. omologazione, classe **UNI EN 1789** (A1/A2/B/C), `has_lift`, `has_priority_lights` (art. 177 CdS) | Il sollevatore vero è un'attrezzatura con le sue scadenze; qui c'è solo il fatto che il mezzo ce l'ha. |
 | Immatricolazione | data prima immatricolazione, n. carta di circolazione | La prima revisione delle autovetture dipende da questa data. |
 | Proprietà e provenienza | `ownership` (proprietà/comodato/leasing/noleggio), intestatario, acquisto e valore, **`funding_source`** (fondi propri, 5×1000, donazione, bando), **`donor_name`**, vita utile, **`bollo_exempt`** | Chi finanzia un mezzo di solito chiede di rendicontare: senza `funding_source` la domanda «cosa abbiamo comprato col 5×1000» non ha risposta. Molti mezzi sanitari di ETS sono esenti dal bollo: se è vero, la scadenza non nasce. |
-| Esercizio | `initial_odometer_km` (km all'ingresso in flotta), `odometer_km`, `fuel_vehicle_code` | `odometer_km` è **derivato**: vale l'ultima lettura, o i km d'ingresso se non ce ne sono, e non si scrive a mano (il database lo rifiuta); si cambia registrando una lettura. I km d'ingresso si correggono, ma non sopra una lettura già registrata. Il distributore identifica il mezzo dalla **matricola**: se coincide con il numero interno `fuel_vehicle_code` resta vuoto, se il distributore ne usa una sua si scrive qui. Un codice vuoto, o di soli spazi e trattini, non è un codice e si rifiuta. |
+| Esercizio | `initial_odometer_km` (km all'ingresso in flotta) e `initial_odometer_on` (di che giorno), `odometer_km`, `fuel_vehicle_code` | `odometer_km` è **derivato**: vale l'ultima lettura, o i km d'ingresso se non ce ne sono, e non si scrive a mano (il database lo rifiuta); si cambia registrando una lettura. I km d'ingresso si correggono, ma non sopra una lettura già registrata; con `initial_odometer_on` (il giorno a cui si riferiscono) anche la prima lettura si controlla per i salti impossibili. Il distributore identifica il mezzo dalla **matricola**: se coincide con il numero interno `fuel_vehicle_code` resta vuoto, se il distributore ne usa una sua si scrive qui. Un codice vuoto, o di soli spazi e trattini, non è un codice e si rifiuta. |
 | Fine vita | data e motivo di dismissione | |
 
 Collegate al mezzo: `odometer_readings` (ogni lettura, da qualunque
@@ -205,8 +205,10 @@ targa è l'ultima risorsa.
 **L'abbinamento**, in quattro passate:
 
 1. stesso buono, stesso prodotto (gasolio e AdBlue sullo stesso scontrino
-   restano distinti), data vicina, numeri che tornano; fra più candidati il
-   più vicino;
+   restano distinti), data vicina, numeri che tornano. Anche qui
+   l'assegnazione è ottima (vedi sotto): i numeri dei buoni si ripetono, e
+   con due righe e due pieni dello stesso buono in giorni vicini la coppia
+   più vicina presa per prima lascerebbe orfani una riga e un pieno;
 2. stesso mezzo, prodotto e data, litri e importo entro tolleranza:
    l'assegnazione **ottima** per mezzo e prodotto (algoritmo ungherese), cioè
    il massimo numero di coppie e, a parità, la distanza complessiva minima.
@@ -219,7 +221,9 @@ targa è l'ultima risorsa.
 4. stesso mezzo e data ma numeri che non tornano: `mismatch` col candidato
    più vicino.
 
-Il risultato non dipende dall'ordine delle righe in ingresso.
+Il risultato non dipende dall'ordine delle righe in ingresso. Il lordo
+delle righe imponibili si arrotonda al centesimo con il mezzo centesimo per
+eccesso (28,75 € + 22% = 35,08 €, non i 35,07 della virgola mobile).
 
 Tolleranze di default: ±1 giorno, ±0,5 litri, ±0,50 €.
 
@@ -233,7 +237,7 @@ Tolleranze di default: ±1 giorno, ±0,5 litri, ±0,50 €.
 |---|---|
 | `deadline_types` | Il catalogo: periodicità di default (mesi **o** giorni, e/o km), preavviso in giorni e km, `month_end`, `renew_from_due` (RCA e bollo si rinnovano dall'anniversario, non dal giorno del pagamento), `blocking`, `document_required`, `is_vehicle_tax`, `completed_by_crew`, riferimento normativo. |
 | `deadline_rules` | A chi si applica e ogni quanto: una categoria di mezzo **o** un tipo di attrezzatura, eventualmente solo per certe proprietà. È qui che la stessa «revisione» vale 12 mesi per un'ambulanza e 24 per un'automedica. |
-| `deadlines` | La scadenza corrente di **un** mezzo **o** **un'**attrezzatura. Periodicità, preavviso e blocco **ereditano**: un campo nullo vale quanto la regola, e se anche la regola tace quanto il tipo. Un valore scritto sulla scadenza è una correzione a mano (il tagliando di quel Ducato è a 40.000 km) e vince. I valori effettivi si leggono dalla vista `deadlines_effective`. Periodicità positive e preavvisi non negativi, a tutti e tre i livelli: uno 0 scritto per sbaglio farebbe scadere l'adempimento il giorno stesso. |
+| `deadlines` | La scadenza corrente di **un** mezzo **o** **un'**attrezzatura. Periodicità, preavviso e blocco **ereditano**: un campo nullo vale quanto la regola, e se anche la regola tace quanto il tipo. Un valore scritto sulla scadenza è una correzione a mano (il tagliando di quel Ducato è a 40.000 km) e vince. I valori effettivi si leggono dalla vista `deadlines_effective`. Periodicità positive e preavvisi non negativi, a tutti e tre i livelli: uno 0 scritto per sbaglio farebbe scadere l'adempimento il giorno stesso. Le date stanno fra il 1900 e il 2999 (l'anno 26 di un errore di battitura il motore non lo saprebbe leggere). |
 | `deadline_completions` | Ogni adempimento: data, km, esito (`passed`/`conditional`/`failed`), prossima scadenza, fornitore, n. documento, **costo**, intervento o sanificazione collegati. Registrarlo **sposta la scadenza** (trigger): così l'amministrazione registra il rinnovo dell'RCA senza poter modificare la scadenza. Correggere o cancellare un adempimento la ricalcola; uno fallito non sposta niente. Un adempimento non può avere una data futura. È anche da qui che il costo di un mezzo prende premio RCA, bollo e revisioni. |
 
 **La scadenza vale la più lontana fra la base e l'ultimo adempimento.** La
@@ -247,12 +251,18 @@ valido. Così:
   riporta indietro una scadenza più recente;
 - scrivere a mano una data più lontana la fa diventare la nuova base;
   scriverne una **più vicina** di quella fissata dall'ultimo adempimento si
-  rifiuta: quella data si corregge correggendo l'adempimento.
+  rifiuta: quella data si corregge correggendo l'adempimento;
+- data e km hanno ciascuno la sua base: correggere i km non tocca la base
+  della data (e viceversa);
+- due adempimenti registrati nello stesso momento (l'amministrazione e il
+  responsabile mezzi) si mettono in fila sulla scadenza: il ricalcolo li
+  vede entrambi.
 
 **La sanificazione periodica la chiude l'equipaggio, ma decide il
 database.** Per i tipi `completed_by_crew` il volontario registra
 l'adempimento collegando una **propria** sanificazione **periodica**, sullo
-**stesso mezzo**, degli ultimi 30 giorni, e usata una volta sola. Data e
+**stesso mezzo**, degli ultimi 30 giorni, e usata una volta sola per
+ciascuna scadenza. Data e
 prossima scadenza le calcola il database dalla sanificazione
 (`compute_next_due`, la stessa regola di `nextDue`), costo e fornitore non
 li scrive: qualunque cosa mandi il telefono, la scadenza non si sposta di
@@ -342,7 +352,7 @@ dispositivo vero.
 
 | Scadenza | Si applica a | Periodicità | Blocca |
 |---|---|---|---|
-| Manutenzione preventiva del fabbricante | DAE, monitor, aspiratore, ventilatore, barella autocaricante, sollevatore (bloccante); sedia portantina, presidi di immobilizzazione (non bloccante); riduttori O2 (60 mesi) | 12 mesi | vedi colonna |
+| Manutenzione preventiva del fabbricante | DAE, monitor, aspiratore, ventilatore, barella autocaricante, sollevatore (bloccante); sedia portantina, presidi di immobilizzazione, saturimetro (non bloccante); riduttori O2 (60 mesi) | 12 mesi | vedi colonna |
 | Verifica di sicurezza elettrica (CEI EN 62353) | elettromedicali collegati alla rete (non il saturimetro a batteria) | 12 mesi | no |
 | Scadenza elettrodi / piastre | DAE, monitor-defibrillatore | data sulla confezione | sì |
 | Sostituzione batteria | DAE, monitor-defibrillatore | data del fabbricante | sì |
@@ -368,7 +378,8 @@ Una check-list nasce **in bozza**: chi la compila (solo lui) scrive e
 corregge le risposte, poi la **invia** (`submitted_at`). Da inviata non
 cambia più: niente risposte aggiunte, niente correzioni, niente ritorno in
 bozza. Solo la direzione può correggere una risposta sbagliata (resta
-nell'audit), ma non chi l'ha compilata né il modello. Una risposta salvata
+nell'audit), ma non chi l'ha compilata né il modello, e una risposta non si
+sposta su un'altra check-list. Una risposta salvata
 mentre la check-list viene inviata aspetta l'invio e poi si rifiuta (lock
 sulla check-list): non entra di nascosto in una check-list già chiusa. È
 documentazione, e le cose che contano le decide il database, non l'app: la
@@ -422,13 +433,19 @@ l'equipaggio non li vede, e allega solo alle **proprie** segnalazioni e
 alle **proprie** check-list in bozza. Un allegato non si modifica (si
 cancella e si ricarica): cambiarne il documento di riferimento potrebbe
 renderlo visibile a chi non deve. I documenti di una fattura li toglie
-l'amministrazione, gli altri i responsabili dei mezzi.
+l'amministrazione, gli altri i responsabili dei mezzi. Cancellato un
+documento (la propria bozza di check-list, un mezzo), i suoi allegati se ne
+vanno con lui; il file su MinIO lo toglierà un job dell'app che cerca i
+file senza riga.
 
 **Numerazione** (`SGN-`, `MAN-`, `SIN-AAAA-NNNNN`): il numero lo assegna il
 **database** all'inserimento, in ordine per associazione e anno, e ignora
 quello che manda l'app; poi non cambia più. Se il numero lo scegliesse
 l'app, chiunque potrebbe occupare i numeri futuri e far fallire ogni
-segnalazione successiva. I contatori non sono scrivibili dall'app.
+segnalazione successiva. Le cifre sono almeno cinque e crescono quando
+servono (dopo 99.999 viene 100.000, non un 10000 ripetuto). Nella
+numerazione possono restare buchi: sono documenti interni, non fiscali. I
+contatori l'app non li legge né li scrive.
 
 ---
 
@@ -436,9 +453,14 @@ segnalazione successiva. I contatori non sono scrivibili dall'app.
 
 Ogni tabella ha una policy di isolamento per associazione; sopra, policy
 **restrittive** per ruolo (una riga passa solo se le soddisfa tutte, quindi
-l'isolamento non si può dimenticare aggiungendo un ruolo). Verificate da
-[`tests/rls.test.sql`](../packages/db/tests/rls.test.sql), eseguito con il
-ruolo applicativo vero. I ruoli si controllano sempre per elenco positivo,
+l'isolamento non si può dimenticare aggiungendo un ruolo). La tabella qui
+sotto è **eseguita** da
+[`tests/matrix.test.sql`](../packages/db/tests/matrix.test.sql): per ogni
+tabella, ogni ruolo (più uno sconosciuto) e ogni comando prova davvero a
+leggere, inserire, modificare e cancellare con il ruolo applicativo, e
+confronta con l'atteso. Togliere una qualunque policy fa fallire un test.
+I casi fini (a proprio nome, bozze, documenti propri) li verifica
+[`tests/rls.test.sql`](../packages/db/tests/rls.test.sql). I ruoli si controllano sempre per elenco positivo,
 e una policy restrittiva comune (`known_role`) chiude ogni tabella a un
 ruolo assente o sconosciuto: senza ruolo non si legge nemmeno l'elenco dei
 mezzi.
@@ -451,7 +473,7 @@ mezzi.
 | Interventi, sinistri (contengono costi) | — | CRUD | CRU | RU | CRUD |
 | Segnalazioni, rifornimenti, letture km | CR¹ (la segnalazione nasce aperta) | CRUD | CRU | CRU | CRUD |
 | Allegati | R (no fatture, interventi, sinistri), C¹ solo sulle proprie segnalazioni e check-list in bozza | CRD (no C né D sulle fatture) | CR (no fatture) | CRD (D solo sulle fatture) | CRUD |
-| Check-list | CR³ | CR³ | CR³ | CR³ | CRUD |
+| Check-list | CRUD³ | CRUD³ | CRUD³ | CRUD³ | CRUD |
 | Sanificazioni (documentazione) | CR¹ | CR | CR | CR | CRUD |
 | Commenti alle segnalazioni | CR¹ (senza note interne) | CR² | CR² | CR² | CRD² |
 | Fatture carburante | — | R | — | CRUD | CRUD |
@@ -463,7 +485,7 @@ mezzi.
 | Audit log | — | — | — | R | R |
 
 ¹ solo a proprio nome. ² solo a proprio nome, anche note interne.
-³ a proprio nome per tutti i ruoli; in bozza la modifica solo chi la compila, inviata nessuno.
+³ a proprio nome per tutti i ruoli; U e D solo sulla propria bozza: inviata, la corregge solo la direzione.
 
 ---
 
