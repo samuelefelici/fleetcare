@@ -1,0 +1,53 @@
+import { boolean, index, integer, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { fleetcareSchema } from "./_schema";
+import { crewMembers, profiles, tenants } from "./core";
+import { faultArea, faultSeverity, faultStatus } from "./enums";
+import { equipment } from "./equipment";
+import { maintenanceJobs } from "./maintenance";
+import { vehicles } from "./vehicles";
+
+/**
+ * Segnalazioni di guasto: dall'equipaggio, a fine servizio o dalla
+ * check-list. Stesso principio del gestionale TPL (segnalare costa meno
+ * di un minuto, nessun campo obbligatorio oltre mezzo + descrizione +
+ * gravità), ma senza la tassonomia VMRS a tre livelli: per una ventina di
+ * mezzi un'area (`fault_area`) e, se è un'attrezzatura, quale, bastano a
+ * smistare e a fare statistica.
+ */
+export const faultReports = fleetcareSchema.table(
+  "fault_reports",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    number: text("number").notNull(), // SGN-YYYY-NNNNN
+    vehicleId: uuid("vehicle_id")
+      .notNull()
+      .references(() => vehicles.id),
+    /** se il guasto è di un'attrezzatura: quale (l'aspiratore non aspira, il DAE non supera l'autotest) */
+    equipmentId: uuid("equipment_id").references(() => equipment.id),
+    area: faultArea("area").notNull().default("other"),
+    description: text("description").notNull(),
+    severity: faultSeverity("severity").notNull(),
+    status: faultStatus("status").notNull().default("open"),
+    /** «il mezzo non è sicuro»: avviso immediato al responsabile, il mezzo va verificato prima di uscire */
+    unsafe: boolean("unsafe").notNull().default(false),
+    crewMemberId: uuid("crew_member_id").references(() => crewMembers.id),
+    reportedById: uuid("reported_by_id").references(() => profiles.id),
+    odometerKm: integer("odometer_km"),
+    maintenanceJobId: uuid("maintenance_job_id").references(() => maintenanceJobs.id),
+    acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolutionNote: text("resolution_note"),
+    rejectedReason: text("rejected_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("fault_reports_tenant_number_uq").on(t.tenantId, t.number),
+    index("fault_reports_tenant_status_idx").on(t.tenantId, t.status),
+    index("fault_reports_vehicle_idx").on(t.tenantId, t.vehicleId, t.status),
+    index("fault_reports_created_idx").on(t.tenantId, t.createdAt),
+  ],
+);

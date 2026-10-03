@@ -1,0 +1,18 @@
+node_modules/
+.next/
+dist/
+.turbo/
+coverage/
+
+# env — mai secrets nel repo (solo Coolify UI)
+.env
+.env.*
+!.env.example
+
+# storage locale dev
+.minio-data/
+.pg-data/
+
+*.log
+.DS_Store
+*.tsbuildinfo

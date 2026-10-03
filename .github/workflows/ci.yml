@@ -1,0 +1,61 @@
+name: CI
+
+# Su ogni PR: lint + typecheck + test, poi le migration e i test RLS su un
+# Postgres vero. Il deploy NON lo fa Actions: lo fa Coolify al push su main.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fleetcare
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d fleetcare"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:5432/fleetcare
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      # lo schema Drizzle e le migration devono dire la stessa cosa
+      - name: Migration allineate allo schema
+        run: pnpm db:generate && git diff --exit-code -- packages/db/migrations && test -z "$(git status --porcelain -- packages/db/migrations)"
+
+      - name: Migrate + seed
+        run: pnpm db:migrate && pnpm db:seed
+
+      - name: RLS policy tests
+        run: psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/rls.test.sql
