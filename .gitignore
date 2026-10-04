@@ -16,3 +16,6 @@ coverage/
 *.log
 .DS_Store
 *.tsbuildinfo
+
+# copie di lavoro degli agenti (git worktree)
+.claude/worktrees/
