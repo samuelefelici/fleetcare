@@ -11,6 +11,7 @@
  */
 import postgres from "postgres";
 import { afterAll, describe, expect, it } from "vitest";
+import { localMigrations, migrationState } from "../src/ops/migrations";
 import { scramSha256Verifier } from "../src/ops/scram";
 import { selfCheck } from "../src/ops/selfcheck";
 
@@ -127,5 +128,64 @@ describe("autocontrollo dell'installazione", () => {
       await tx.unsafe(`grant temporary on database "${db!.name}" to public`);
     });
     expect(checks["oggetti temporanei"]).toBe(false);
+  });
+});
+
+describe("controllo delle migration prima di applicarle", () => {
+  const folder = new URL("../migrations", import.meta.url).pathname;
+  const local = localMigrations(folder);
+
+  /** lo stato come lo vede prepare.ts, dopo aver manomesso il diario del database (poi annullato) */
+  async function stateAfter(
+    breakIt: (tx: postgres.ReservedSql) => Promise<unknown>,
+    migrations = local,
+  ) {
+    const tx = await sql.reserve();
+    try {
+      await tx`begin`;
+      await breakIt(tx);
+      return await migrationState(tx, migrations);
+    } finally {
+      await tx`rollback`;
+      tx.release();
+    }
+  }
+
+  it("database allineato: niente da fare", async () => {
+    const state = await stateAfter(async () => {});
+    expect(state).toEqual({ applied: local.length, changed: [], skipped: [], pending: [] });
+  });
+
+  it("una migration già applicata e poi modificata viene riconosciuta", async () => {
+    const state = await stateAfter(
+      (tx) => tx`update drizzle.__drizzle_migrations set hash = 'manomessa'
+                  where created_at = (select max(created_at) from drizzle.__drizzle_migrations)`,
+    );
+    expect(state.changed).toEqual([local.at(-1)!.tag]);
+  });
+
+  it("una migration più vecchia dell'ultima applicata verrebbe saltata da drizzle", async () => {
+    const vecchia = { tag: "0002_vecchia", when: local[0]!.when + 1, hash: "x" };
+    const state = await stateAfter(async () => {}, [...local, vecchia]);
+    expect(state.skipped).toEqual(["0002_vecchia"]);
+    expect(state.pending).toEqual([]);
+  });
+
+  it("una migration nuova è da applicare", async () => {
+    const nuova = { tag: "0002_nuova", when: local.at(-1)!.when + 1, hash: "x" };
+    const state = await stateAfter(async () => {}, [...local, nuova]);
+    expect(state.pending).toEqual(["0002_nuova"]);
+  });
+
+  it("database nuovo: tutto da applicare", async () => {
+    const state = await stateAfter(
+      (tx) => tx`alter table drizzle.__drizzle_migrations rename to nascosta`,
+    );
+    expect(state).toEqual({
+      applied: 0,
+      changed: [],
+      skipped: [],
+      pending: local.map((m) => m.tag),
+    });
   });
 });

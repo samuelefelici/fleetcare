@@ -1,184 +1,146 @@
-# FleetCare su Coolify
+# FleetCare su Coolify, passo per passo
 
-Come si mette in produzione FleetCare sul Coolify del server Hetzner, e
-perché così. Ogni passo finisce con un **checkpoint**: non si va avanti
-finché non torna. I passi irreversibili sono segnati con ⚠️.
+Per **Coolify 4.3.23**. Si fa in questo ordine, una volta sola. Ogni passo
+ha un **controllo**: se non torna, non si va avanti. I passi segnati ⚠️
+non si possono annullare.
 
-I fatti su Coolify vengono dalla sua documentazione e dal suo codice
-sorgente (v4.3.23 e main 4.4.0, ottobre 2026). I nomi dei campi della UI
-cambiano da una versione all'altra: dove differiscono sono scritti tutti e
-due.
+Il perché delle scelte è in fondo (§7). Il ripristino da backup è al §6.
 
 ---
 
-## 1. La scelta: un Dockerfile, e il database come risorsa a parte
+## 1. Due password
 
-**L'app è una Application con build pack «Dockerfile»; PostgreSQL è una
-risorsa Database di Coolify, separata.** Niente Docker Compose.
+Dal tuo PC:
 
-| | Dockerfile + risorsa PostgreSQL | Docker Compose con il database dentro |
-|---|---|---|
-| Aggiornamento | il container nuovo parte accanto al vecchio e lo sostituisce solo quando risponde all'healthcheck; se non risponde, resta il vecchio | Coolify ferma tutto e poi riavvia: un'interruzione a ogni push, e non aspetta che i servizi siano sani |
-| Backup del database | schedulati da Coolify, su S3, con restore dalla UI | per un database dentro una compose collegata a GitHub **non esistono** (issue coollabsio/coolify#7528, aperta) |
-| Ciclo di vita del database | indipendente dai deploy dell'app | legato alla stack: un deploy tocca anche il database |
+```bash
+openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32; echo
+```
 
-È la stessa architettura di `fleetmanagement`, con una differenza voluta:
-lì il database è quello condiviso di Cerbero, qui è **dedicato** (decisione
-2 dell'analisi).
+Lancialo due volte e conserva i due risultati:
 
-**Il database è `postgres:17-alpine`, non PostGIS.** FleetCare non ha dati
-spaziali, e l'immagine `postgis/postgis` crea da sola, in ogni database
-nuovo, gli schemi `tiger` e `topology`: provato qui, il ripristino di un
-backup di Coolify in un database nuovo fallisce per intero («schema tiger
-already exists»). Postgres 17 è anche quello su cui girano CI e test.
+- **password A** → per l'utente `postgres` del database;
+- **password B** → per l'utente `fleetcare_app` dell'applicazione.
 
-### Cosa fa il container a ogni avvio
+Solo lettere e cifre: finiscono dentro un indirizzo e non devono avere
+simboli.
 
-`docker/entrypoint.sh` → `packages/db/src/ops/prepare.ts`, poi il server:
+## 2. Il bucket per i backup (Hetzner)
 
-1. **migration**, una alla volta anche con due container (advisory lock).
-   Se una migration già applicata è stata modificata, si ferma: drizzle la
-   salterebbe in silenzio;
-2. **ruolo applicativo `fleetcare_app`**: lo crea se manca, niente
-   superutente né bypass della RLS, e la password diventa quella scritta in
-   `DATABASE_URL` (una sola fonte: la variabile di Coolify);
-3. **permessi** del ruolo riapplicati (`fleetcare.apply_app_privileges()`):
-   il backup di Coolify non li contiene (vedi §4);
-4. **seed** dell'associazione, se c'è `SEED_TENANT_SLUG` (una volta sola);
-5. **autocontrollo** con la connessione dell'app: utenza giusta, RLS,
-   permessi, policy, niente tabelle temporanee.
+I backup del database devono stare **fuori dal server**. Su Hetzner si usa
+*Object Storage* (la Storage Box non va bene: non parla S3). Ha un canone
+mensile fisso: lo vedi in console prima di confermare.
 
-Se uno di questi passi fallisce, il container esce con errore: Coolify lo
-scarta e tiene in piedi la versione precedente. Poi parte il processo che
-risponde a `GET /health` (oggi c'è solo quello: l'app web arriverà al suo
-posto, nello stesso container).
+1. Cloud Console di Hetzner → il tuo progetto → menu a sinistra **Object
+   Storage** → **Create Bucket**.
+2. **Location**: `fsn1` (Falkenstein) o `nbg1` (Norimberga). **Name**:
+   `fleetcare-backup`. **Visibility**: **private**. Conferma.
+3. Le chiavi: nella pagina dell'Object Storage, **Manage credentials** →
+   descrizione `coolify` → **Generate credentials**. Copia subito **Access
+   key** e **Secret key**: la secret si vede una volta sola.
 
-Le migration stanno nell'avvio del container e non nei comandi di
-pre/post-deployment di Coolify: il pre-deployment gira nel container
-**vecchio**, prima della build, quindi con il codice vecchio; il
-post-deployment gira quando il traffico è già passato alla versione nuova,
-e un suo errore non fa fallire il deploy.
+**Controllo**: il bucket è nella lista, privato. Segnati l'endpoint, che
+dipende dalla location: `https://fsn1.your-objectstorage.com` (o `nbg1`).
 
----
+Fonte: la guida Hetzner [Creating a Bucket](https://docs.hetzner.com/storage/object-storage/getting-started/creating-a-bucket/).
 
-## 2. Prima di iniziare
+## 3. Il database
 
-- **Versione di Coolify** (in basso a sinistra nella UI): decide i nomi dei
-  campi.
-- **Un bucket S3 per i backup, fuori dal server.** Su Hetzner è *Object
-  Storage* (la Storage Box non parla S3). Crearlo prima: Coolify lo
-  verifica ma non lo crea.
-- **Due password nuove**, di soli lettere e cifre (niente da codificare
-  negli URL):
-  ```bash
-  openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32; echo
-  ```
-  una per l'utente `postgres` (se non si usa quella generata da Coolify),
-  una per `fleetcare_app`.
+Coolify → **Projects** → **+ Add** → nome `FleetCare` (ambiente
+`production`). Entra nel progetto.
 
----
+**+ New** → **Databases** → **PostgreSQL** → scegli la scheda
+**PostgreSQL 17** ⚠️ (immagine `postgres:17-alpine`). Non PostgreSQL 18 e
+non PostGIS. La versione si sceglie adesso: cambiarla dopo sposta i dati
+in un posto dove il database non li trova più.
 
-## 3. Passi
-
-### 3.1 Progetto
-
-*Projects → + Add*: progetto **FleetCare**, ambiente **production**.
-
-### 3.2 PostgreSQL ⚠️ l'immagine si sceglie adesso
-
-*+ New → Database → PostgreSQL*, scegliendo **PostgreSQL 17**
-(`postgres:17-alpine`).
-
-⚠️ Non creare la risorsa con un'altra versione per poi cambiare «Image»:
-Coolify fissa il percorso del volume dati alla creazione (PG 18 usa
-`/var/lib/postgresql`, PG 17 `/var/lib/postgresql/data`), e dopo il cambio
-i dati finirebbero in un volume anonimo.
+Nella pagina del database:
 
 - **Name**: `fleetcare-db`
-- **Initial database**: `fleetcare`
-- **Username**: `postgres`, **Password**: quella generata
-- **Accesso pubblico** («Make it publicly available» / «Public access»):
-  **spento**. Le porte pubblicate da Docker scavalcano anche il firewall
-  del sistema (UFW).
-- Per entrare dal proprio PC, se serve: «Port mappings» →
-  `127.0.0.1:15432:5432` (solo sul server), poi un tunnel SSH:
-  `ssh -L 15432:127.0.0.1:15432 root@<server>`.
+- **Initial Database**: `fleetcare`
+- **Username**: `postgres` · **Password**: la **password A**
+- Sezione **Public access** → **Access**: **Private**. Resta privato: una
+  porta pubblica scavalca anche il firewall del server.
 
-*Start*.
+**Start**.
 
-**Checkpoint**: la risorsa è *Running*. Copiare «Postgres URL (internal)»
-(nella documentazione «Internal URL»): l'host è l'identificativo della
-risorsa, per esempio `postgres://postgres:…@k8s0g4c…:5432/fleetcare`.
+**Controllo**: stato *Running*. Copia il campo **Postgres URL (internal)**:
+è fatto così
+`postgres://postgres:<password A>@<codice>:5432/fleetcare`. Il `<codice>`
+è l'indirizzo interno del database: ti serve al §5.
 
-### 3.3 Backup
+## 4. I backup
 
-1. *Settings → S3 Storages → + Add*: provider **Hetzner**, endpoint
-   dell'Object Storage (per esempio `https://fsn1.your-objectstorage.com`),
-   regione, bucket, chiavi. *Validate*.
-2. Sulla risorsa `fleetcare-db`: *Backups → + Add* (accanto a «Scheduled
-   Backups»):
-   - **Frequency**: `30 0 * * *`, cioè ogni notte. L'orario è nel fuso del
-     server, di solito UTC: 00:30 UTC sono le 01:30 o le 02:30 a Roma;
-   - **Databases**: solo `fleetcare` («Specific databases»);
-   - **S3**: attivo, sullo storage appena creato;
-   - **Retention**: ⚠️ il default è 0, cioè «per sempre», sia sul disco sia
-     su S3. Mettere per esempio 7 backup in locale e 30 giorni su S3.
+1. In alto, **Settings** (icona ingranaggio) → **S3 Storages** → **+ Add**:
+   - **Name**: `hetzner-backup`
+   - **Endpoint**: `https://fsn1.your-objectstorage.com` (la tua location)
+   - **Bucket**: `fleetcare-backup` · **Region**: `fsn1`
+   - **Access Key** / **Secret Key**: quelle del §2
+   - **Validate**, poi salva.
+2. Torna a `fleetcare-db` → scheda **Backups** → **+ Add** (Scheduled
+   Backups):
+   - **Frequency**: `30 0 * * *` (ogni notte; l'ora è quella del server,
+     di solito UTC)
+   - **Database selection**: *Specific databases* → `fleetcare`
+   - **Enable S3** → **S3 storage**: `hetzner-backup` → **Local copy**:
+     *Delete after S3 upload*
+   - **Backups to keep**: `7` · **Days to keep**: `30` ⚠️ (il valore di
+     partenza è 0 = per sempre: lo spazio si riempie)
+   - salva.
+3. **Backup Now**.
 
-**Checkpoint**: *Backup Now* → il backup compare nella lista come riuscito,
-e il file `.dmp` è nel bucket.
+**Controllo**: nella lista il backup è *Success* e nel bucket, su Hetzner,
+c'è il file `.dmp`.
 
-### 3.4 Application
+## 5. L'applicazione
 
-*+ New → Private Repository (with GitHub App)* → `samuelefelici/fleetcare`.
+Nel progetto: **+ New** → **Private Repository (with GitHub App)** →
+`samuelefelici/fleetcare` → **Branch** `main` → **Build Pack**
+**Dockerfile** → **Continue**.
 
-- **Branch**: `main`
-- **Build pack**: `Dockerfile`
-- **Base Directory**: `/`; **Dockerfile Location**: `/Dockerfile`
+Nella pagina dell'applicazione, scheda **General**:
+
+- **Name**: `fleetcare`
+- **Base Directory**: `/` · **Dockerfile Location**: `/Dockerfile`
 - **Ports Exposes**: `3000`
-- **Domains**: per ora vuoto. Oggi il container risponde solo a `/health`;
-  il dominio servirà con l'app web.
-- **Healthcheck** nella UI: **spento** (il default). Coolify usa allora
-  l'`HEALTHCHECK` del Dockerfile. Accesi tutti e due, quello della UI
-  sostituisce quello del Dockerfile.
-- **Preview deployments**: ⚠️ **spenti**. Una preview eredita le variabili
-  di produzione: con `DATABASE_ADMIN_URL` di produzione il container della
-  PR migrerebbe il database vero con il codice della PR.
-- **Pre-deployment / Post-deployment command**: vuoti.
-- **Ports Mappings**, **Custom Container Name**, nome del container fisso:
-  non impostarli, disattivano l'aggiornamento senza interruzione.
+- **Domains**: vuoto per ora (oggi risponde solo l'healthcheck; il dominio
+  si mette con l'app web)
+- **Pre-deployment** e **Post-deployment Command**: vuoti
+- **Docker build stage target**: vuoto
 
-### 3.5 Variabili d'ambiente ⚠️ nessuna al build
+Scheda **Healthcheck**: lasciala **disattivata**. Coolify usa quello
+scritto nel Dockerfile.
 
-*Environment Variables*. Per **ognuna** togliere la disponibilità al build
-(«Available at Buildtime» / «Is Build Variable?» nelle versioni vecchie;
-«Build time: Not available during build» dalla 4.3): Coolify le crea
-disponibili al build, e allora finiscono come build argument
-nell'immagine. Il Dockerfile non ne usa nessuna.
+Scheda **Environment Variables** → aggiungi queste, e per **ognuna** metti
+**Build time: Not available during build** ⚠️ (Coolify le crea
+disponibili al build, e finirebbero dentro l'immagine). **Runtime** resta
+*Available in the container*.
 
-| Variabile | Valore |
+| Nome | Valore |
 |---|---|
-| `DATABASE_ADMIN_URL` | il «Postgres URL (internal)» copiato al §3.2 (utente `postgres`) |
-| `DATABASE_URL` | lo stesso host, con l'utente `fleetcare_app` e la sua password: `postgres://fleetcare_app:<password>@<host>:5432/fleetcare` |
+| `DATABASE_ADMIN_URL` | il *Postgres URL (internal)* copiato al §3, intero |
+| `DATABASE_URL` | `postgres://fleetcare_app:<password B>@<codice>:5432/fleetcare` (lo stesso `<codice>` del §3) |
 | `SEED_TENANT_SLUG` | `croce-gialla-camerano` |
 | `SEED_TENANT_NAME` | `Croce Gialla di Camerano` |
-| `SEED_TENANT_NETWORK`, `SEED_TENANT_CITY`, `SEED_TENANT_PROVINCE` | `ANPAS`, `Camerano`, `AN` (facoltative) |
+| `SEED_TENANT_NETWORK` | `ANPAS` |
+| `SEED_TENANT_CITY` | `Camerano` |
+| `SEED_TENANT_PROVINCE` | `AN` |
 
-`NODE_ENV` non va impostata: è già nel Dockerfile, e resa disponibile al
-build farebbe saltare a pnpm parte delle dipendenze.
+Niente `NODE_ENV`: è già nel Dockerfile. Niente preview delle PR (scheda
+**Advanced**, lascia spento *Preview Deployments*): una preview userebbe
+il database di produzione.
 
-La password di `fleetcare_app` **non si imposta a mano**: la scrive il
-container a ogni avvio prendendola da `DATABASE_URL`. Per cambiarla basta
-cambiare la variabile e fare *Redeploy*.
+**Deploy**.
 
-### 3.6 Primo deploy
+**Controllo**, in due posti:
 
-*Deploy*.
-
-**Checkpoint**, nei log del deploy:
+- nel **log del deploy**: `Custom healthcheck found in Dockerfile` e `New
+  container is healthy`;
+- nella scheda **Logs** dell'applicazione:
 
 ```
-[fleetcare] migration: 2 applicate
-[fleetcare] ruolo applicativo: password da DATABASE_URL, permessi riapplicati, niente superutente né TEMP
+[fleetcare] migration: 2 applicate (2 adesso: 0000_init, 0001_rls_and_functions)
+[fleetcare] ruolo applicativo: password impostata da DATABASE_URL
+[fleetcare] ruolo applicativo: permessi riapplicati, niente superutente né TEMP
 Seed «Croce Gialla di Camerano»: 15 tipi di scadenza, 17 tipi di attrezzatura, 64 regole, …
 [fleetcare] autocontrollo:
   ok  database: «fleetcare» come «fleetcare_app»
@@ -190,91 +152,74 @@ Seed «Croce Gialla di Camerano»: 15 tipi di scadenza, 17 tipi di attrezzatura,
 [fleetcare] in ascolto sulla porta 3000 (GET /health)
 ```
 
-e, nel log di Coolify, «Custom healthcheck found in Dockerfile» e «New
-container is healthy»: l'applicazione risulta *Running (healthy)*. Dal
-*Terminal* del container: `wget -qO- 127.0.0.1:3000/health` →
-`{"ok":true}`. Il *Terminal* lo apre solo un owner o admin del team, e sul
-server dev'essere attivo *Terminal Access* (Servers → server → Security).
-
 Se una riga dice `NO`, il container non parte e il messaggio dice cosa
-manca. Il caso più probabile è `DATABASE_URL` scritto con l'utente
-`postgres`: il container lo rifiuta, perché l'app scavalcherebbe tutte le
-regole su chi vede che cosa.
+manca. L'errore più facile da fare: `DATABASE_URL` scritto con l'utente
+`postgres` invece di `fleetcare_app`. Il container lo rifiuta, perché così
+l'app vedrebbe tutto di tutti.
 
-### 3.7 Prova di ripristino, subito
-
-Prima che ci siano dati veri, una volta: §4, su una risorsa PostgreSQL di
-prova creata apposta. Un backup mai ripristinato non è un backup.
+Fatto. Da qui ogni push su `main` ricostruisce l'immagine e la mette in
+linea solo se passa l'autocontrollo; altrimenti resta quella di prima.
 
 ---
 
-## 4. Ripristino (procedura provata)
+## 6. Ripristinare un backup
 
-**Cosa c'è nel backup.** Coolify fa `pg_dump --format=custom --no-acl
---no-owner` del database (`app/Jobs/DatabaseBackupJob.php`). Contiene
-schemi, dati, RLS e policy. **Non** contiene il ruolo `fleetcare_app` (i
-ruoli sono del server, non del database), né i GRANT (`--no-acl`), né la
-revoca delle tabelle temporanee. I permessi li riapplica il container al
-primo avvio; il ruolo invece deve esistere **prima** del ripristino,
-perché le policy lo citano.
+**Regola unica: si ripristina sempre in un database nuovo**, mai sopra
+quello in uso. Così un ripristino sbagliato non cancella niente.
 
-Passi:
-
-1. Se il ripristino va in una risorsa nuova: creala come al §3.2 (PostgreSQL
-   17, database `fleetcare`).
-2. Dal *Terminal* della risorsa database:
+1. Crea una risorsa PostgreSQL nuova come al §3 (**PostgreSQL 17**,
+   database `fleetcare`, stessa password A va bene) e configura i backup
+   come al §4.
+2. Dal suo **Terminal** (scheda Terminal della risorsa):
    ```bash
    psql -U postgres -d fleetcare -c "create role fleetcare_app login"
    ```
-   (la password la metterà il container). Se il ruolo c'è già, l'errore
-   «already exists» va bene.
-3. ⚠️ *Import Backup* (sotto «Configuration»): dal file o da S3. Se il
-   database ha già dei dati: «Replace objects that already exist». Dalla
-   4.4 l'import è una transazione unica: se manca il ruolo fallisce e non
-   cambia niente. Nella 4.3 il comando è modificabile: usare
+   Il backup non contiene il ruolo, e senza il ruolo il ripristino
+   fallisce. La password gliela rimette l'app al primo avvio.
+3. Scheda **Import Backup**: *Restore from S3* → lo storage e il file
+   `.dmp`. Nel campo **Import command** sostituisci il comando con:
    ```bash
-   pg_restore --exit-on-error --single-transaction --no-owner --no-acl -U $POSTGRES_USER -d ${POSTGRES_DB:-postgres}
+   pg_restore --exit-on-error --single-transaction --no-owner --no-acl --clean --if-exists -U $POSTGRES_USER -d ${POSTGRES_DB:-postgres}
    ```
-   così un errore annulla tutto invece di lasciare un ripristino a metà.
-4. Sull'application: se il database è nuovo, aggiornare host in
-   `DATABASE_ADMIN_URL` e `DATABASE_URL`; poi *Redeploy* (o *Restart*).
+   (così, se qualcosa va storto, non resta un ripristino a metà). Avvia.
+4. Sull'applicazione: `DATABASE_ADMIN_URL` = il *Postgres URL (internal)*
+   della risorsa nuova, intero; in `DATABASE_URL` cambia solo il `<codice>`
+   dell'host. **Redeploy**.
+5. Quando tutto torna, spegni i backup della risorsa vecchia (o eliminala).
 
-**Checkpoint**: l'autocontrollo nei log è tutto `ok` (in particolare
-«permessi» e «policy»), e i dati ci sono. Senza il passo 2 l'import fallisce
-(4.4) oppure, nella 4.3 col comando di default, le policy mancano e il
-container non parte con `NO policy`: si rifà il ripristino con il ruolo.
+**Controllo**: nella scheda Logs l'autocontrollo è tutto `ok`, e i dati ci
+sono.
 
-Provato in locale con i comandi esatti di Coolify su `postgres:17-alpine`:
-- senza ruolo, il ripristino fallisce e non cambia niente;
-- con il ruolo, riesce, ma l'app non ha permessi e le tabelle temporanee
-  sono di nuovo permesse;
-- dopo l'avvio del container i permessi sono tornati, i dati ci sono, e
-  `rls.test.sql`, `matrix.test.sql` e `rules.test.sql` passano sul database
-  ripristinato.
+**Prova del ripristino** (da fare una volta, subito dopo il §5, prima che
+ci siano dati veri): passi 1-3 su una risorsa `fleetcare-prova`, poi dal
+suo Terminal `psql -U postgres -d fleetcare -c "select count(*) from
+fleetcare.deadline_types"` deve dare 15. Poi elimina `fleetcare-prova`.
+L'applicazione non si tocca.
 
----
+## 7. Cose da sapere
 
-## 5. Da qui in avanti
-
-- **Una migration applicata in produzione non si tocca più.** Fino al primo
-  deploy le migration si sono riscritte, ma da qui le modifiche allo schema
-  vanno in una migration nuova: `pnpm db:generate`, oppure `drizzle-kit
-  generate --custom` per l'SQL. Se una migration già applicata cambia, il
-  container non parte e dice quale.
-- **Le migration devono andare bene anche alla versione precedente.**
-  Durante l'aggiornamento il vecchio container gira ancora sul database già
-  migrato: si aggiunge prima, si toglie in un rilascio successivo.
-- **Una migration gira in una transazione sola** (così le applica drizzle):
-  niente `CREATE INDEX CONCURRENTLY` né altre istruzioni che non lo
-  permettono. Se una migration diventa lenta (una tabella grande), il
-  container ha circa 2 minuti per diventare sano: oltre, va alzato
-  `--start-period` nel Dockerfile.
-- **Le preview delle PR restano spente**, finché non avranno un loro
-  database.
-- **I segreti stanno solo in Coolify**, mai nel repository né al build.
-- **Lo storage dei documenti** (certificati, foto delle segnalazioni) si
-  sceglie con l'app web. MinIO non è più fra i servizi di Coolify e il
-  progetto è archiviato da aprile 2026: le strade sono Hetzner Object
-  Storage (lo stesso dei backup, in un altro bucket) o un servizio S3
-  self-hosted come Garage. Il codice parla S3, quindi la scelta non lo
-  cambia.
+- **Cambiare la password B**: cambia `DATABASE_URL` e fai **Redeploy**,
+  nient'altro in quel deploy. Il container nuovo imposta la password nuova
+  nel database. Se quel deploy fallisse, rimetti subito il valore vecchio
+  e rifai Redeploy, altrimenti il container rimasto in linea perde
+  l'accesso al database entro un'ora.
+- **Una migration applicata in produzione non si modifica più**: le
+  modifiche allo schema vanno in una migration nuova (`pnpm db:generate`).
+  Se una già applicata cambia, il container non parte e dice quale, senza
+  toccare il database.
+- **Perché un Dockerfile e non Docker Compose**: con il Dockerfile Coolify
+  avvia il container nuovo accanto al vecchio e lo sostituisce solo se
+  risponde all'healthcheck; con le compose ferma tutto e riavvia. E un
+  database dentro una compose collegata a GitHub non ha i backup
+  schedulati.
+- **Perché `postgres:17-alpine` e non PostGIS**: FleetCare non ha dati
+  spaziali, e con l'immagine PostGIS il ripristino di un backup in un
+  database nuovo fallisce (crea da sola uno schema che il backup contiene
+  già).
+- **Dove girano le migration**: all'avvio del container, non nei comandi
+  di pre/post-deployment di Coolify. Il pre-deployment gira sul codice
+  vecchio; il post-deployment quando il traffico è già passato, e un suo
+  errore non ferma il deploy.
+- **Lo storage dei documenti** (certificati, foto) si sceglie con l'app
+  web: un secondo bucket sullo stesso Object Storage di Hetzner è la strada
+  più semplice. MinIO non è più fra i servizi di Coolify.
