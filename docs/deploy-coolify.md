@@ -102,8 +102,8 @@ Nella pagina dell'applicazione, scheda **General**:
 - **Name**: `fleetcare`
 - **Base Directory**: `/` · **Dockerfile Location**: `/Dockerfile`
 - **Ports Exposes**: `3000`
-- **Domains**: vuoto per ora (oggi risponde solo l'healthcheck; il dominio
-  si mette con l'app web)
+- **Domains**: `https://fleetcare-ambulanza.samuelefelici.com` (serve il
+  record DNS di tipo A verso il server)
 - **Pre-deployment** e **Post-deployment Command**: vuoti
 - **Docker build stage target**: vuoto
 
@@ -119,6 +119,7 @@ disponibili al build, e finirebbero dentro l'immagine). **Runtime** resta
 |---|---|
 | `DATABASE_ADMIN_URL` | il *Postgres URL (internal)* copiato al §3, intero |
 | `DATABASE_URL` | `postgres://fleetcare_app:<password B>@<codice>:5432/fleetcare` (lo stesso `<codice>` del §3) |
+| `AUTH_SECRET` | la firma dei cookie di accesso: `openssl rand -base64 32` |
 | `SEED_TENANT_SLUG` | `croce-gialla-camerano` |
 | `SEED_TENANT_NAME` | `Croce Gialla di Camerano` |
 | `SEED_TENANT_NETWORK` | `ANPAS` |
@@ -157,8 +158,11 @@ Seed «Croce Gialla di Camerano»: 15 tipi di scadenza, 17 tipi di attrezzatura,
   ok  permessi: lettura su tutte le tabelle
   ok  policy: isolamento e ruolo valido su ogni tabella
   ok  RLS: attiva su 35 tabelle
-[fleetcare] in ascolto sulla porta 3000 (GET /health)
+  ▲ Next.js 15 … Ready
 ```
+
+e aprendo il dominio compare la pagina di accesso: si entra con
+`BOOTSTRAP_ADMIN_EMAIL` e la sua password.
 
 Se una riga dice `NO`, il container non parte e il messaggio dice cosa
 manca. L'errore più facile da fare: `DATABASE_URL` scritto con l'utente
@@ -167,6 +171,8 @@ l'app vedrebbe tutto di tutti.
 
 Fatto. Da qui ogni push su `main` ricostruisce l'immagine e la mette in
 linea solo se passa l'autocontrollo; altrimenti resta quella di prima.
+Dall'app, con l'utenza della direzione, si creano le altre persone e le
+loro utenze.
 
 ---
 

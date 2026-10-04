@@ -29,6 +29,12 @@ export function getDb(databaseUrl: string): Db {
   return _db;
 }
 
+/** La connessione grezza dietro `getDb`, per l'autocontrollo (/api/health). */
+export function getSql(databaseUrl: string): postgres.Sql {
+  getDb(databaseUrl);
+  return _client!;
+}
+
 export interface TenantContext {
   tenantId: string;
   userId: string;

@@ -10,9 +10,8 @@ Camerano**, circa 20 mezzi; lo schema è multi-associazione fin dall'inizio.
 
 ## Cosa c'è
 
-Per ora il **database**: schema, migration, RLS, logica di dominio pura e il
-catalogo iniziale, e il container che lo tiene pronto in produzione. L'app
-(`apps/web`) è il passo successivo.
+Il **database** (schema, migration, RLS, logica di dominio pura, catalogo
+iniziale) e l'**app web** (`apps/web`, Next.js), nello stesso container.
 
 ```
 packages/db                     @fleetcare/db
@@ -22,7 +21,11 @@ packages/db                     @fleetcare/db
   src/domain/labels.ts          etichette italiane degli enum
   src/seed/catalog.ts           catalogo iniziale: scadenze, attrezzature, dotazione, check-list
   src/ops/                      avvio del container: prepare.ts (migration, ruolo applicativo,
-                                permessi, seed, autocontrollo) e server.ts (GET /health)
+                                permessi, seed, prima utenza, autocontrollo), password.ts
+apps/web                        l'app: Next.js 15 App Router, Tailwind v4, Auth.js (email e password)
+  src/server/auth.ts            accesso: utenza cercata in tutte le associazioni, sessione JWT
+  src/server/db.ts              ogni query dentro withTenant, con la sessione
+  src/app/                      pagine: login, mezzi, …; api/health = autocontrollo
   migrations/0000_init.sql      generata da drizzle-kit
   migrations/0001_rls_and_functions.sql   ruolo app, RLS, audit, regole del database, vista
                                 delle scadenze effettive, login, numerazione
@@ -62,7 +65,7 @@ docker build -t fleetcare .
 docker run --rm -p 3000:3000 --add-host=host.docker.internal:host-gateway \
   -e DATABASE_ADMIN_URL=postgres://postgres:postgres@host.docker.internal:5432/fleetcare \
   -e DATABASE_URL=postgres://fleetcare_app:una-password@host.docker.internal:5432/fleetcare \
-  fleetcare        # poi: curl localhost:3000/health
+  fleetcare        # poi: curl localhost:3000/api/health
 ```
 
 ## Qualità
@@ -70,7 +73,8 @@ docker run --rm -p 3000:3000 --add-host=host.docker.internal:host-gateway \
 ```bash
 pnpm lint          # prettier --check
 pnpm typecheck     # tsc strict
-pnpm test          # Vitest: scadenze, abbinamento carburante, coerenza del catalogo
+pnpm test          # Vitest: scadenze, abbinamento carburante, coerenza del catalogo, password
+pnpm dev           # l'app su http://localhost:3000 (serve .env con DATABASE_URL e AUTH_SECRET)
 
 # su un DB migrato, con il ruolo applicativo vero; chiudono con ROLLBACK:
 psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/rls.test.sql     # permessi

@@ -52,6 +52,13 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # l'app si compila senza variabili d'ambiente (come nell'immagine)
+      - name: Build dell'app
+        run: pnpm build
+        env:
+          SKIP_ENV_VALIDATION: "1"
+          NEXT_TELEMETRY_DISABLED: "1"
+
       # lo schema Drizzle e le migration devono dire la stessa cosa
       - name: Migration allineate allo schema
         run: pnpm db:generate && git diff --exit-code -- packages/db/migrations && test -z "$(git status --porcelain -- packages/db/migrations)"
@@ -95,7 +102,7 @@ jobs:
           # server non parte, così un'accettazione non resta appesa)
           if out=$(timeout 120 docker run --rm --network host \
                -e DATABASE_ADMIN_URL="$DATABASE_ADMIN_URL" -e DATABASE_URL="$DATABASE_ADMIN_URL" \
-               --entrypoint sh fleetcare:ci -c 'cd /app/packages/db && node --import tsx src/ops/prepare.ts' 2>&1); then
+               --entrypoint sh fleetcare:ci -c 'cd /app/db/packages/db && node --import tsx src/ops/prepare.ts' 2>&1); then
             echo "$out"; echo "accettata l'utenza dell'amministratore"; exit 1
           fi
           echo "$out" | grep -q 'deve usare fleetcare_app'
@@ -104,6 +111,7 @@ jobs:
           app_url="postgres://fleetcare_app:ci$(openssl rand -hex 16)@localhost:5432/fleetcare"
           docker run -d --name fleetcare --network host \
             -e DATABASE_ADMIN_URL="$DATABASE_ADMIN_URL" -e DATABASE_URL="$app_url" \
+            -e AUTH_SECRET="ci-$(openssl rand -hex 16)" \
             -e SEED_TENANT_SLUG=croce-gialla-camerano fleetcare:ci
           for i in $(seq 1 45); do
             [ "$(docker inspect -f '{{.State.Health.Status}}' fleetcare)" = healthy ] && break
@@ -112,5 +120,6 @@ jobs:
           done
           docker logs fleetcare
           test "$(docker inspect -f '{{.State.Health.Status}}' fleetcare)" = healthy
-          test "$(curl -fsS localhost:3000/health)" = '{"ok":true}'
+          test "$(curl -fsS localhost:3000/api/health)" = '{"ok":true}'
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:3000/login)" = 200
           docker stop fleetcare
