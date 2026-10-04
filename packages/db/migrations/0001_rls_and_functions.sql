@@ -38,27 +38,43 @@ begin
 end
 $$;
 
-grant usage on schema fleetcare to fleetcare_app;
-grant select, insert, update, delete on all tables in schema fleetcare to fleetcare_app;
-alter default privileges in schema fleetcare
-  grant select, insert, update, delete on tables to fleetcare_app;
--- l'audit si scrive solo dal trigger
-revoke insert, update, delete on fleetcare.audit_logs from fleetcare_app;
--- i tenant si leggono e si aggiornano, non si creano né cancellano dall'app
-revoke insert, delete on fleetcare.tenants from fleetcare_app;
--- i contatori li usa solo il trigger che numera i documenti: un contatore
--- azzerato a mano farebbe fallire ogni segnalazione successiva, e letti
--- direbbero all'equipaggio quanti interventi e sinistri ci sono stati
-revoke all on fleetcare.document_counters from fleetcare_app;
--- niente oggetti temporanei: con una tabella temporanea e un trigger
--- proprio l'app falserebbe pg_trigger_depth() (vedi in testa). Il database
--- è dedicato (decisione 2): nessun altro ne ha bisogno.
-do $$
+-- ---------- i permessi del ruolo applicativo, in un posto solo ----------
+-- Una funzione invece di GRANT sparsi: la chiama questa migration in fondo
+-- (quando tutti gli oggetti esistono) e la richiama il container a ogni
+-- avvio (src/ops/prepare.ts). Serve dopo un ripristino: il backup di
+-- Coolify è un `pg_dump --no-acl` e non contiene nessun GRANT, e nessun
+-- pg_dump salva i permessi sul database (TEMP) né il search_path del
+-- ruolo. Rieseguirla non cambia niente. Una migration che aggiunge un
+-- permesso particolare lo aggiunge qui (create or replace).
+create or replace function fleetcare.apply_app_privileges() returns void
+  language plpgsql as
+$$
 begin
+  grant usage on schema fleetcare to fleetcare_app;
+  -- tabelle e viste, comprese quelle create dalle migration successive
+  grant select, insert, update, delete on all tables in schema fleetcare to fleetcare_app;
+  alter default privileges in schema fleetcare
+    grant select, insert, update, delete on tables to fleetcare_app;
+  -- l'audit si scrive solo dal trigger
+  revoke insert, update, delete on fleetcare.audit_logs from fleetcare_app;
+  -- i tenant si leggono e si aggiornano, non si creano né cancellano dall'app
+  revoke insert, delete on fleetcare.tenants from fleetcare_app;
+  -- i contatori li usa solo il trigger che numera i documenti: un contatore
+  -- azzerato a mano farebbe fallire ogni segnalazione successiva, e letti
+  -- direbbero all'equipaggio quanti interventi e sinistri ci sono stati
+  revoke all on fleetcare.document_counters from fleetcare_app;
+  -- il login: l'unica funzione che attraversa la RLS, solo per l'app
+  revoke all on function fleetcare.auth_find_profile(text, text) from public;
+  grant execute on function fleetcare.auth_find_profile(text, text) to fleetcare_app;
+  -- questa funzione la esegue solo l'owner
+  revoke all on function fleetcare.apply_app_privileges() from public;
+  -- niente oggetti temporanei: con una tabella temporanea e un trigger
+  -- proprio l'app falserebbe pg_trigger_depth() (vedi in testa). Il
+  -- database è dedicato (decisione 2): nessun altro ne ha bisogno.
   execute format('revoke temporary on database %I from public', current_database());
+  alter role fleetcare_app set search_path = fleetcare, public;
 end
 $$;
-alter role fleetcare_app set search_path = fleetcare, public;
 
 -- ---------- helper contesto ----------
 create or replace function fleetcare.app_tenant_id() returns uuid
@@ -322,8 +338,7 @@ $$
     join fleetcare.tenants t on t.id = a.tenant_id
    where t.slug = p_tenant_slug and lower(a.email) = lower(p_email)
 $$;
-revoke all on function fleetcare.auth_find_profile(text, text) from public;
-grant execute on function fleetcare.auth_find_profile(text, text) to fleetcare_app;
+-- (chi la può eseguire: apply_app_privileges, in fondo)
 
 -- ---------- numerazione dei documenti ----------
 -- SGN-2026-00001 (segnalazioni), MAN-… (interventi), SIN-… (sinistri):
@@ -468,7 +483,7 @@ left join fleetcare.deadline_rules r
   on r.tenant_id = d.tenant_id and r.deadline_type_id = d.deadline_type_id
  and ((d.vehicle_id is not null and r.vehicle_category = v.category)
       or (d.equipment_id is not null and r.equipment_type_id = e.equipment_type_id));
-grant select on fleetcare.deadlines_effective to fleetcare_app;
+-- (la lettura per l'app: apply_app_privileges, in fondo)
 
 -- ---------- la prossima scadenza, calcolata dal database ----------
 -- Dai valori effettivi della scadenza: mesi (fermandosi all'ultimo giorno
@@ -1286,3 +1301,8 @@ create policy notifications_insert_role on fleetcare.notifications as restrictiv
 create policy notifications_delete_own on fleetcare.notifications as restrictive
   for delete to fleetcare_app
   using (recipient_id = fleetcare.app_user_id());
+
+-- ============================================================
+-- PERMESSI: tutti gli oggetti esistono, si applicano (vedi in testa)
+-- ============================================================
+select fleetcare.apply_app_privileges();

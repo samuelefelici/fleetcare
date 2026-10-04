@@ -17,7 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:17
+        # la stessa immagine della risorsa PostgreSQL su Coolify
+        image: postgres:17-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -82,3 +83,27 @@ jobs:
           pnpm db:seed
           after=$(q "select count(*) from fleetcare.deadline_rules")
           test "$after" -eq "$((before - 1))"
+
+      # l'immagine che costruirà Coolify: build, avvio sul database della CI
+      # (migration già applicate: il container non deve rifare niente),
+      # healthcheck, e rifiuto dell'utenza dell'amministratore come DATABASE_URL
+      - name: Immagine Docker (build e avvio)
+        run: |
+          docker build -t fleetcare:ci .
+          app_url="postgres://fleetcare_app:ci$(openssl rand -hex 16)@localhost:5432/fleetcare"
+          docker run -d --name fleetcare --network host \
+            -e DATABASE_ADMIN_URL="$DATABASE_ADMIN_URL" -e DATABASE_URL="$app_url" \
+            -e SEED_TENANT_SLUG=croce-gialla-camerano fleetcare:ci
+          for i in $(seq 1 45); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' fleetcare)" = healthy ] && break
+            [ "$(docker inspect -f '{{.State.Running}}' fleetcare)" = true ] || break
+            sleep 2
+          done
+          docker logs fleetcare
+          test "$(docker inspect -f '{{.State.Health.Status}}' fleetcare)" = healthy
+          test "$(curl -fsS localhost:3000/health)" = '{"ok":true}'
+          if docker run --rm --network host -e DATABASE_ADMIN_URL="$DATABASE_ADMIN_URL" \
+               -e DATABASE_URL="$DATABASE_ADMIN_URL" fleetcare:ci; then
+            echo "il container è partito con l'utenza dell'amministratore"; exit 1
+          fi
+          docker stop fleetcare
