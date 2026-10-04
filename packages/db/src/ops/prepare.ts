@@ -46,12 +46,17 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-/** Utente e password di un URL di connessione, senza mai riportare l'URL. */
+/** Utente, password e destinazione di un URL di connessione, senza mai riportare l'URL. */
 function credentials(name: string, value: string | undefined, purpose: string) {
   if (!value) fail(`${name} mancante (${purpose})`);
   try {
     const url = new URL(value);
-    return { user: decodeURIComponent(url.username), password: decodeURIComponent(url.password) };
+    return {
+      user: decodeURIComponent(url.username),
+      password: decodeURIComponent(url.password),
+      host: `${url.hostname}:${url.port || "5432"}`,
+      database: url.pathname.replace(/^\//, "") || "(nessuno)",
+    };
   } catch {
     return fail(
       `${name} non è un URL valido: postgres://utente:password@host:5432/database, ` +
@@ -78,6 +83,15 @@ if (process.env.NODE_ENV === "production" && app.password === DEV_PASSWORD) {
 }
 if (admin.user === APP_ROLE) {
   fail("DATABASE_ADMIN_URL usa fleetcare_app: serve il ruolo owner del database (es. postgres)");
+}
+// le due variabili cambiano solo per utente e password: altrimenti le
+// migration finiscono in un database e l'app ne cerca un altro
+if (admin.host !== app.host || admin.database !== app.database) {
+  fail(
+    `DATABASE_URL e DATABASE_ADMIN_URL devono puntare allo stesso database, e invece: ` +
+      `admin → ${admin.host}/${admin.database}, app → ${app.host}/${app.database}. ` +
+      `Copia DATABASE_ADMIN_URL e cambia solo utente e password`,
+  );
 }
 
 /** L'app riesce a entrare con DATABASE_URL? (il database è già raggiungibile: lo dice la connessione owner) */
