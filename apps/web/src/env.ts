@@ -11,6 +11,13 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   /** firma dei cookie di sessione: openssl rand -base64 32 */
   AUTH_SECRET: z.string().min(16),
+  /**
+   * L'indirizzo pubblico dell'app (https://fleetcare-….samuelefelici.com):
+   * Auth.js lo usa per i redirect dopo l'accesso. Senza, si fida degli
+   * header del proxy; con un indirizzo esplicito non c'è niente da
+   * indovinare. La legge Auth.js da sola da process.env.
+   */
+  AUTH_URL: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

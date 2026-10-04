@@ -120,6 +120,7 @@ disponibili al build, e finirebbero dentro l'immagine). **Runtime** resta
 | `DATABASE_ADMIN_URL` | il *Postgres URL (internal)* copiato al §3, intero |
 | `DATABASE_URL` | `postgres://fleetcare_app:<password B>@<codice>:5432/fleetcare` (lo stesso `<codice>` del §3) |
 | `AUTH_SECRET` | la firma dei cookie di accesso: `openssl rand -base64 32` |
+| `AUTH_URL` | `https://fleetcare-ambulanza.samuelefelici.com` (l'indirizzo dell'app, per i redirect dopo l'accesso) |
 | `SEED_TENANT_SLUG` | `croce-gialla-camerano` |
 | `SEED_TENANT_NAME` | `Croce Gialla di Camerano` |
 | `SEED_TENANT_NETWORK` | `ANPAS` |

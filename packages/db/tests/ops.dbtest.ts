@@ -241,10 +241,10 @@ describe("prima utenza della direzione", () => {
       await expect(bootstrapAdmin(sql, SLUG, { ...admin, password: "corta" })).rejects.toThrow(
         /almeno 10/,
       );
-      const [{ n }] = await sql<{ n: number }[]>`
+      const [count] = await sql<{ n: number }[]>`
         select count(*)::int as n from fleetcare.profile_accounts a
           join fleetcare.tenants t on t.id = a.tenant_id where t.slug = ${SLUG}`;
-      expect(n).toBe(0);
+      expect(count!.n).toBe(0);
     });
   });
 });
