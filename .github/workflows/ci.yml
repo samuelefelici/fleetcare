@@ -1,7 +1,8 @@
 name: CI
 
-# Su ogni PR: lint + typecheck + test, poi le migration e i test RLS su un
-# Postgres vero. Il deploy NON lo fa Actions: lo fa Coolify al push su main.
+# Su ogni PR: lint + typecheck + test, poi le migration e i test su un
+# Postgres vero (permessi, regole, parità con il TypeScript). Il deploy NON
+# lo fa Actions: lo fa Coolify al push su main.
 on:
   pull_request:
   push:
@@ -16,7 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:17
+        # la stessa immagine della risorsa PostgreSQL su Coolify
+        image: postgres:17-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -50,6 +52,13 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # l'app si compila senza variabili d'ambiente (come nell'immagine)
+      - name: Build dell'app
+        run: pnpm build
+        env:
+          SKIP_ENV_VALIDATION: "1"
+          NEXT_TELEMETRY_DISABLED: "1"
+
       # lo schema Drizzle e le migration devono dire la stessa cosa
       - name: Migration allineate allo schema
         run: pnpm db:generate && git diff --exit-code -- packages/db/migrations && test -z "$(git status --porcelain -- packages/db/migrations)"
@@ -57,5 +66,60 @@ jobs:
       - name: Migrate + seed
         run: pnpm db:migrate && pnpm db:seed
 
-      - name: RLS policy tests
+      - name: Test dei permessi (RLS)
         run: psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/rls.test.sql
+
+      # la tabella del §9 di docs/analisi-campi.md, cella per cella
+      - name: Matrice dei permessi
+        run: psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/matrix.test.sql
+
+      - name: Test delle regole del database
+        run: psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -f packages/db/tests/rules.test.sql
+
+      # le regole scritte due volte (vista SQL e TypeScript) devono coincidere;
+      # e due adempimenti registrati insieme non si perdono
+      - name: Parità database / TypeScript e concorrenza
+        run: pnpm test:db
+
+      # un secondo seed non deve far risorgere ciò che l'associazione ha eliminato
+      - name: Seed rilanciato dopo una cancellazione
+        run: |
+          q() { psql "$DATABASE_ADMIN_URL" -Atc "$1"; }
+          before=$(q "select count(*) from fleetcare.deadline_rules")
+          q "delete from fleetcare.deadline_rules where id = (select id from fleetcare.deadline_rules limit 1)"
+          pnpm db:seed
+          after=$(q "select count(*) from fleetcare.deadline_rules")
+          test "$after" -eq "$((before - 1))"
+
+      # l'immagine che costruirà Coolify: build, avvio sul database della CI
+      # (migration già applicate: il container non deve rifare niente),
+      # healthcheck, e rifiuto dell'utenza dell'amministratore come DATABASE_URL
+      - name: Immagine Docker (build e avvio)
+        run: |
+          docker build -t fleetcare:ci .
+          # con l'utenza dell'amministratore al posto del ruolo applicativo la
+          # preparazione deve fermarsi, e dire perché (solo prepare: il
+          # server non parte, così un'accettazione non resta appesa)
+          if out=$(timeout 120 docker run --rm --network host \
+               -e DATABASE_ADMIN_URL="$DATABASE_ADMIN_URL" -e DATABASE_URL="$DATABASE_ADMIN_URL" \
+               --entrypoint sh fleetcare:ci -c 'cd /app/db/packages/db && node --import tsx src/ops/prepare.ts' 2>&1); then
+            echo "$out"; echo "accettata l'utenza dell'amministratore"; exit 1
+          fi
+          echo "$out" | grep -q 'deve usare fleetcare_app'
+          # avvio sul database della CI (migration già applicate: non rifà
+          # niente), con una password nuova per fleetcare_app, fino all'healthcheck
+          app_url="postgres://fleetcare_app:ci$(openssl rand -hex 16)@localhost:5432/fleetcare"
+          docker run -d --name fleetcare --network host \
+            -e DATABASE_ADMIN_URL="$DATABASE_ADMIN_URL" -e DATABASE_URL="$app_url" \
+            -e AUTH_SECRET="ci-$(openssl rand -hex 16)" \
+            -e SEED_TENANT_SLUG=croce-gialla-camerano fleetcare:ci
+          for i in $(seq 1 45); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' fleetcare)" = healthy ] && break
+            [ "$(docker inspect -f '{{.State.Running}}' fleetcare)" = true ] || break
+            sleep 2
+          done
+          docker logs fleetcare
+          test "$(docker inspect -f '{{.State.Health.Status}}' fleetcare)" = healthy
+          test "$(curl -fsS localhost:3000/api/health)" = '{"ok":true}'
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:3000/login)" = 200
+          docker stop fleetcare

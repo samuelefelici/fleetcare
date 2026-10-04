@@ -12,7 +12,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { fleetcareSchema } from "./_schema";
+import { fleetcareSchema, tenantFk, tenantKey } from "./_schema";
 import { profiles, sites, tenants } from "./core";
 import { equipmentGroup, equipmentStatus, ownershipKind } from "./enums";
 import { vehicles } from "./vehicles";
@@ -50,7 +50,10 @@ export const equipmentTypes = fleetcareSchema.table(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("equipment_types_tenant_code_uq").on(t.tenantId, t.code)],
+  (t) => [
+    tenantKey("equipment_types", t),
+    uniqueIndex("equipment_types_tenant_code_uq").on(t.tenantId, t.code),
+  ],
 );
 
 /** Attributi propri di un tipo: capacità bombola, kg e agente dell'estintore, portata della barella… */
@@ -73,17 +76,15 @@ export const equipment = fleetcareSchema.table(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
-    equipmentTypeId: uuid("equipment_type_id")
-      .notNull()
-      .references(() => equipmentTypes.id),
+    equipmentTypeId: uuid("equipment_type_id").notNull(),
     /** n. di inventario interno (etichetta/QR applicato sull'oggetto) */
     inventoryCode: text("inventory_code"),
     manufacturer: text("manufacturer"),
     model: text("model"),
     serialNumber: text("serial_number"),
     status: equipmentStatus("status").notNull().default("in_use"),
-    vehicleId: uuid("vehicle_id").references(() => vehicles.id),
-    siteId: uuid("site_id").references(() => sites.id),
+    vehicleId: uuid("vehicle_id"),
+    siteId: uuid("site_id"),
     /** dove sta sul mezzo: "vano sanitario, parete sx", "zaino rosso" */
     positionNote: text("position_note"),
     ownership: ownershipKind("ownership").notNull().default("owned"),
@@ -103,6 +104,7 @@ export const equipment = fleetcareSchema.table(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    tenantKey("equipment", t),
     index("equipment_tenant_status_idx").on(t.tenantId, t.status),
     index("equipment_vehicle_idx").on(t.tenantId, t.vehicleId),
     index("equipment_type_idx").on(t.tenantId, t.equipmentTypeId),
@@ -113,6 +115,9 @@ export const equipment = fleetcareSchema.table(
       "equipment_one_place_ck",
       sql`not (${t.vehicleId} is not null and ${t.siteId} is not null)`,
     ),
+    tenantFk("equipment_equipment_type_id_fk", t.tenantId, t.equipmentTypeId, equipmentTypes),
+    tenantFk("equipment_vehicle_id_fk", t.tenantId, t.vehicleId, vehicles),
+    tenantFk("equipment_site_id_fk", t.tenantId, t.siteId, sites),
   ],
 );
 
@@ -124,16 +129,28 @@ export const equipmentMovements = fleetcareSchema.table(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
-    equipmentId: uuid("equipment_id")
-      .notNull()
-      .references(() => equipment.id, { onDelete: "cascade" }),
+    equipmentId: uuid("equipment_id").notNull(),
     movedAt: timestamp("moved_at", { withTimezone: true }).notNull().defaultNow(),
-    fromVehicleId: uuid("from_vehicle_id").references(() => vehicles.id),
-    toVehicleId: uuid("to_vehicle_id").references(() => vehicles.id),
-    fromSiteId: uuid("from_site_id").references(() => sites.id),
-    toSiteId: uuid("to_site_id").references(() => sites.id),
+    fromVehicleId: uuid("from_vehicle_id"),
+    toVehicleId: uuid("to_vehicle_id"),
+    fromSiteId: uuid("from_site_id"),
+    toSiteId: uuid("to_site_id"),
     reason: text("reason"),
-    movedById: uuid("moved_by_id").references(() => profiles.id),
+    movedById: uuid("moved_by_id"),
   },
-  (t) => [index("equipment_movements_eq_idx").on(t.tenantId, t.equipmentId, t.movedAt)],
+  (t) => [
+    index("equipment_movements_eq_idx").on(t.tenantId, t.equipmentId, t.movedAt),
+    tenantFk(
+      "equipment_movements_equipment_id_fk",
+      t.tenantId,
+      t.equipmentId,
+      equipment,
+      "cascade",
+    ),
+    tenantFk("equipment_movements_from_vehicle_id_fk", t.tenantId, t.fromVehicleId, vehicles),
+    tenantFk("equipment_movements_to_vehicle_id_fk", t.tenantId, t.toVehicleId, vehicles),
+    tenantFk("equipment_movements_from_site_id_fk", t.tenantId, t.fromSiteId, sites),
+    tenantFk("equipment_movements_to_site_id_fk", t.tenantId, t.toSiteId, sites),
+    tenantFk("equipment_movements_moved_by_id_fk", t.tenantId, t.movedById, profiles),
+  ],
 );

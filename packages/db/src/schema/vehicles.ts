@@ -11,8 +11,8 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { fleetcareSchema } from "./_schema";
-import { crewMembers, profiles, sites, tenants } from "./core";
+import { fleetcareSchema, tenantFk, tenantKey } from "./_schema";
+import { profiles, sites, tenants } from "./core";
 import {
   en1789Type,
   fuelType,
@@ -42,7 +42,7 @@ export const vehicles = fleetcareSchema.table(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
-    siteId: uuid("site_id").references(() => sites.id),
+    siteId: uuid("site_id"),
 
     // --- identificazione ---
     /** numero interno dell'associazione, quello scritto sulla fiancata */
@@ -65,9 +65,11 @@ export const vehicles = fleetcareSchema.table(
     euroClass: text("euro_class"),
     powerKw: integer("power_kw"),
     /**
-     * Massa complessiva a pieno carico. Oltre 3.500 kg cambia la patente
-     * richiesta (C1) e la periodicità della revisione: è il dato da cui
-     * dipendono due regole, non un dettaglio tecnico.
+     * Massa complessiva a pieno carico. Oltre 3.500 kg servono la patente
+     * C1 e la revisione annuale (art. 80 CdS), come oltre i 9 posti. Le
+     * regole del catalogo non lo leggono: per i pulmini e i mezzi di
+     * protezione civile la revisione nasce annuale (il lato sicuro) e il
+     * responsabile la porta a 24 mesi sui mezzi che lo consentono.
      */
     grossWeightKg: integer("gross_weight_kg"),
     seats: integer("seats"), // posti omologati, conducente compreso
@@ -116,15 +118,28 @@ export const vehicles = fleetcareSchema.table(
     bolloExempt: boolean("bollo_exempt").notNull().default(false),
 
     // --- esercizio ---
-    /** ultimo valore noto, aggiornato dal trigger su `odometer_readings` */
+    /** km all'ingresso in flotta: la base delle letture quando non ce n'è nessuna */
+    initialOdometerKm: integer("initial_odometer_km").notNull().default(0),
+    /**
+     * Il giorno a cui si riferiscono i km d'ingresso. Se è noto, la prima
+     * lettura si controlla anche per i salti impossibili (una cifra di
+     * troppo); se manca (mezzo caricato senza sapere quando) no.
+     */
+    initialOdometerOn: date("initial_odometer_on"),
+    /**
+     * Km attuali: **derivati**, li scrive solo il trigger su
+     * `odometer_readings` (l'ultima lettura, o i km iniziali). Una scrittura
+     * diretta viene rifiutata: il km si cambia inserendo una lettura.
+     */
     odometerKm: integer("odometer_km").notNull().default(0),
     odometerUpdatedAt: timestamp("odometer_updated_at", { withTimezone: true }),
     /**
-     * Come il distributore riconosce il mezzo, se non dalla targa
-     * (tessera, codice cliente per mezzo). Serve all'abbinamento delle
-     * righe di fattura con i rifornimenti.
+     * La **matricola** con cui il distributore identifica il mezzo nel
+     * riepilogo della fattura, quando è diversa dal numero interno. Se il
+     * distributore usa il numero interno, resta vuota: l'abbinamento prova
+     * prima questa, poi il numero interno, poi la targa.
      */
-    fuelCardCode: text("fuel_card_code"),
+    fuelVehicleCode: text("fuel_vehicle_code"),
 
     // --- fine vita ---
     decommissionedOn: date("decommissioned_on"),
@@ -135,10 +150,36 @@ export const vehicles = fleetcareSchema.table(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex("vehicles_tenant_internal_code_uq").on(t.tenantId, t.internalCode),
-    uniqueIndex("vehicles_tenant_plate_uq").on(t.tenantId, t.plate),
+    tenantKey("vehicles", t),
+    /* unicità sui valori normalizzati, gli stessi che usa il riconoscimento
+       della matricola (`normalizeVehicleCode` / `normalizePlate`): «05» e
+       «5», «FX 123 AB» e «FX123AB» sono lo stesso mezzo */
+    uniqueIndex("vehicles_tenant_internal_code_uq").on(
+      t.tenantId,
+      sql`regexp_replace(regexp_replace(upper(${t.internalCode}), '[^A-Z0-9]', '', 'g'), '^0+([0-9]+)$', '\\1')`,
+    ),
+    uniqueIndex("vehicles_tenant_plate_uq").on(
+      t.tenantId,
+      sql`regexp_replace(upper(${t.plate}), '[^A-Z0-9]', '', 'g')`,
+    ),
+    uniqueIndex("vehicles_tenant_fuel_code_uq")
+      .on(
+        t.tenantId,
+        sql`regexp_replace(regexp_replace(upper(${t.fuelVehicleCode}), '[^A-Z0-9]', '', 'g'), '^0+([0-9]+)$', '\\1')`,
+      )
+      .where(sql`${t.fuelVehicleCode} is not null`),
     index("vehicles_tenant_status_idx").on(t.tenantId, t.status),
-    check("vehicles_odometer_ck", sql`${t.odometerKm} >= 0`),
+    check("vehicles_odometer_ck", sql`${t.odometerKm} >= 0 and ${t.initialOdometerKm} >= 0`),
+    /* un codice vuoto (o di soli spazi e trattini) non è un codice: nasconderebbe
+       il numero interno al riconoscimento e occuperebbe l'indice unico */
+    check(
+      "vehicles_codes_ck",
+      sql`regexp_replace(upper(${t.internalCode}), '[^A-Z0-9]', '', 'g') <> ''
+          and regexp_replace(upper(${t.plate}), '[^A-Z0-9]', '', 'g') <> ''
+          and (${t.fuelVehicleCode} is null
+               or regexp_replace(upper(${t.fuelVehicleCode}), '[^A-Z0-9]', '', 'g') <> '')`,
+    ),
+    tenantFk("vehicles_site_id_fk", t.tenantId, t.siteId, sites),
   ],
 );
 
@@ -155,17 +196,17 @@ export const odometerReadings = fleetcareSchema.table(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
-    vehicleId: uuid("vehicle_id")
-      .notNull()
-      .references(() => vehicles.id, { onDelete: "cascade" }),
+    vehicleId: uuid("vehicle_id").notNull(),
     km: integer("km").notNull(),
     source: odometerSource("source").notNull().default("manual"),
     readAt: timestamp("read_at", { withTimezone: true }).notNull().defaultNow(),
-    crewMemberId: uuid("crew_member_id").references(() => crewMembers.id),
-    createdById: uuid("created_by_id").references(() => profiles.id),
+    /** chi ha letto il contachilometri (un volontario registra solo a proprio nome) */
+    recordedById: uuid("recorded_by_id").notNull(),
   },
   (t) => [
     index("odometer_vehicle_idx").on(t.tenantId, t.vehicleId, t.readAt),
     check("odometer_km_ck", sql`${t.km} >= 0`),
+    tenantFk("odometer_readings_vehicle_id_fk", t.tenantId, t.vehicleId, vehicles, "cascade"),
+    tenantFk("odometer_readings_recorded_by_id_fk", t.tenantId, t.recordedById, profiles),
   ],
 );

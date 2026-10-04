@@ -2,7 +2,8 @@
 # In produzione Postgres e MinIO sono risorse provisionate su Coolify.
 services:
   postgres:
-    image: postgis/postgis:17-3.4
+    # come la risorsa PostgreSQL su Coolify (docs/deploy-coolify.md)
+    image: postgres:17-alpine
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres

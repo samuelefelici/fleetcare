@@ -17,6 +17,14 @@ export interface DeadlineInterval {
   km?: number | null;
   /** la scadenza cade l'ultimo giorno del mese (revisione: «entro il mese») */
   monthEnd?: boolean;
+  /** si conta dalla scadenza precedente e non dal giorno dell'adempimento (RCA, bollo) */
+  renewFromDue?: boolean;
+  /**
+   * Con `renewFromDue`: entro quanti giorni dalla scadenza un rinnovo
+   * tardivo conserva l'anniversario (RCA: 15). Nullo = calendario fisso,
+   * l'anniversario non si perde mai (bollo).
+   */
+  renewGraceDays?: number | null;
 }
 
 export interface NextDue {
@@ -27,23 +35,44 @@ export interface NextDue {
 const MS_PER_DAY = 86_400_000;
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
+const MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
+
+function isLeap(y: number): boolean {
+  return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+}
+
+function daysInMonth(y: number, m: number): number {
+  return m === 2 && isLeap(y) ? 29 : MONTH_DAYS[m - 1]!;
+}
+
+/**
+ * Una data di calendario vera, fra il 1900 e il 9999. Il 30 febbraio o il
+ * 31 aprile non diventano in silenzio il 2 marzo o il 1° maggio: sono un
+ * errore di chi ha scritto la data, e si rifiutano.
+ */
 function parse(iso: IsoDate): { y: number; m: number; d: number } {
   const match = ISO_DATE.exec(iso);
   if (!match) throw new Error(`Data non valida: ${iso}`);
-  return { y: Number(match[1]), m: Number(match[2]), d: Number(match[3]) };
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+  if (y < 1900 || m < 1 || m > 12 || d < 1 || d > daysInMonth(y, m)) {
+    throw new Error(`Data non valida: ${iso}`);
+  }
+  return { y, m, d };
+}
+
+function utc(y: number, m: number, d: number): number {
+  return Date.UTC(y, m - 1, d);
 }
 
 function toUtcMs(iso: IsoDate): number {
   const { y, m, d } = parse(iso);
-  return Date.UTC(y, m - 1, d);
+  return utc(y, m, d);
 }
 
 function fromUtcMs(ms: number): IsoDate {
   return new Date(ms).toISOString().slice(0, 10);
-}
-
-function daysInMonth(y: number, m: number): number {
-  return new Date(Date.UTC(y, m, 0)).getUTCDate();
 }
 
 /** Aggiunge mesi di calendario; il giorno si ferma all'ultimo del mese (31 gen + 1 mese = 28/29 feb). */
@@ -52,7 +81,7 @@ export function addMonths(iso: IsoDate, months: number): IsoDate {
   const index = y * 12 + (m - 1) + months;
   const ty = Math.floor(index / 12);
   const tm = (index % 12) + 1;
-  return fromUtcMs(Date.UTC(ty, tm - 1, Math.min(d, daysInMonth(ty, tm))));
+  return fromUtcMs(utc(ty, tm, Math.min(d, daysInMonth(ty, tm))));
 }
 
 export function addDays(iso: IsoDate, days: number): IsoDate {
@@ -61,7 +90,7 @@ export function addDays(iso: IsoDate, days: number): IsoDate {
 
 export function endOfMonth(iso: IsoDate): IsoDate {
   const { y, m } = parse(iso);
-  return fromUtcMs(Date.UTC(y, m - 1, daysInMonth(y, m)));
+  return fromUtcMs(utc(y, m, daysInMonth(y, m)));
 }
 
 /** Giorni da `from` a `to` (negativo se `to` è prima). */
@@ -69,24 +98,48 @@ export function daysBetween(from: IsoDate, to: IsoDate): number {
   return Math.round((toUtcMs(to) - toUtcMs(from)) / MS_PER_DAY);
 }
 
+function addInterval(from: IsoDate, interval: DeadlineInterval): IsoDate | null {
+  let due: IsoDate | null = null;
+  if (interval.months) due = addMonths(from, interval.months);
+  else if (interval.days) due = addDays(from, interval.days);
+  if (due && interval.monthEnd) due = endOfMonth(due);
+  return due;
+}
+
 /**
  * Prossima scadenza dopo un adempimento fatto il giorno `doneOn` a
  * `doneKm` km. Una scadenza senza periodicità (elettrodi, fine vita,
  * autorizzazione) restituisce null: la data nuova si legge dal documento.
+ *
+ * Con `renewFromDue` (RCA, bollo) si conta dalla scadenza precedente
+ * `previousDueOn`, avanzando di periodi interi fino a superare il giorno
+ * dell'adempimento: la polizza rinnovata in anticipo o nei giorni di
+ * tolleranza scade comunque all'anniversario, il bollo pagato in ritardo
+ * resta sul suo mese. Con `renewGraceDays`, un rinnovo arrivato oltre la
+ * tolleranza è un contratto nuovo e il periodo parte dall'adempimento.
  */
 export function nextDue(
   doneOn: IsoDate,
   doneKm: number | null,
   interval: DeadlineInterval,
+  previousDueOn: IsoDate | null = null,
 ): NextDue {
   if (interval.months && interval.days) {
     throw new Error("Periodicità in mesi o in giorni, non entrambe");
   }
-  let dueOn: IsoDate | null = null;
-  if (interval.months) dueOn = addMonths(doneOn, interval.months);
-  else if (interval.days) dueOn = addDays(doneOn, interval.days);
-  if (dueOn && interval.monthEnd) dueOn = endOfMonth(dueOn);
-
+  if ((interval.months ?? 0) < 0 || (interval.days ?? 0) < 0) {
+    throw new Error("Periodicità negativa");
+  }
+  parse(doneOn);
+  let dueOn = addInterval(doneOn, interval);
+  if (dueOn && interval.renewFromDue && previousDueOn) {
+    const grace = interval.renewGraceDays ?? null;
+    if (grace === null || daysBetween(previousDueOn, doneOn) <= grace) {
+      let next = addInterval(previousDueOn, interval)!;
+      while (daysBetween(doneOn, next) <= 0) next = addInterval(next, interval)!;
+      dueOn = next;
+    }
+  }
   const dueKm = interval.km && doneKm !== null ? doneKm + interval.km : null;
   return { dueOn, dueKm };
 }
@@ -103,6 +156,7 @@ export interface DeadlineInput {
   dueOn: IsoDate | null;
   dueKm: number | null;
   alertDays: number;
+  /** preavviso in km; nullo = si avvisa solo quando i km sono raggiunti */
   alertKm: number | null;
 }
 
@@ -175,6 +229,7 @@ export interface SemaphoreResult {
  * - verde  altrimenti
  *
  * Una scadenza senza data è gialla, non verde: «non sappiamo» non è «in regola».
+ * Le scadenze archiviate non si passano: sono eliminate.
  */
 export function semaphore(
   items: ReadonlyArray<{ state: DeadlineState; blocking: boolean }>,
@@ -185,6 +240,10 @@ export function semaphore(
   return { color: warn ? "yellow" : "green", blocked };
 }
 
+// ------------------------------------------------------------------
+// Valori effettivi: scadenza → regola → tipo
+// ------------------------------------------------------------------
+
 export interface DeadlineTypeDefaults {
   intervalMonths: number | null;
   intervalDays: number | null;
@@ -194,30 +253,94 @@ export interface DeadlineTypeDefaults {
   blocking: boolean;
 }
 
-export type DeadlineRuleOverrides = Partial<
-  Pick<
-    DeadlineTypeDefaults,
-    "intervalMonths" | "intervalDays" | "intervalKm" | "alertDays" | "blocking"
-  >
->;
+/** I valori di un livello (regola o scadenza): nullo o assente = eredita. */
+export type DeadlineOverrides = {
+  [K in keyof DeadlineTypeDefaults]?: DeadlineTypeDefaults[K] | null;
+};
 
 /**
- * Periodicità, preavviso e blocco con cui nasce una scadenza da una regola:
- * ogni campo nullo della regola eredita dal tipo. Mesi e giorni si
- * escludono: se la regola ne fissa uno, l'altro del tipo non passa.
+ * Sovrappone un livello ai valori sotto: ogni campo nullo eredita. Mesi e
+ * giorni si escludono: se il livello ne fissa uno, l'altro di sotto non
+ * passa.
  */
 export function resolveRule(
-  type: DeadlineTypeDefaults,
-  rule: DeadlineRuleOverrides,
+  base: DeadlineTypeDefaults,
+  over: DeadlineOverrides,
 ): DeadlineTypeDefaults {
-  const ruleSetsTime =
-    (rule.intervalMonths ?? null) !== null || (rule.intervalDays ?? null) !== null;
+  const setsTime = (over.intervalMonths ?? null) !== null || (over.intervalDays ?? null) !== null;
   return {
-    intervalMonths: ruleSetsTime ? (rule.intervalMonths ?? null) : type.intervalMonths,
-    intervalDays: ruleSetsTime ? (rule.intervalDays ?? null) : type.intervalDays,
-    intervalKm: rule.intervalKm ?? type.intervalKm,
-    alertDays: rule.alertDays ?? type.alertDays,
-    alertKm: type.alertKm,
-    blocking: rule.blocking ?? type.blocking,
+    intervalMonths: setsTime ? (over.intervalMonths ?? null) : base.intervalMonths,
+    intervalDays: setsTime ? (over.intervalDays ?? null) : base.intervalDays,
+    intervalKm: over.intervalKm ?? base.intervalKm,
+    alertDays: over.alertDays ?? base.alertDays,
+    alertKm: over.alertKm ?? base.alertKm,
+    blocking: over.blocking ?? base.blocking,
   };
+}
+
+/**
+ * I valori effettivi di una scadenza: la correzione a mano, altrimenti la
+ * regola, altrimenti il tipo. È la stessa catena della vista SQL
+ * `deadlines_effective` (tests/effective.dbtest.ts verifica che coincidano).
+ */
+export function effectiveDeadline(
+  type: DeadlineTypeDefaults,
+  rule: DeadlineOverrides | null,
+  deadline: DeadlineOverrides,
+): DeadlineTypeDefaults {
+  return resolveRule(resolveRule(type, rule ?? {}), deadline);
+}
+
+// ------------------------------------------------------------------
+// Quali scadenze nascono per un mezzo o un'attrezzatura nuovi
+// ------------------------------------------------------------------
+
+/** Una regola come la legge chi deve far nascere le scadenze di un nuovo mezzo o attrezzatura. */
+export interface PlannableRule extends DeadlineOverrides {
+  deadlineTypeId: string;
+  vehicleCategory: string | null;
+  equipmentTypeId: string | null;
+  /** null = qualunque proprietà */
+  ownershipKinds: string[] | null;
+  /** il tipo di scadenza; archiviato = eliminato dall'associazione */
+  type: DeadlineTypeDefaults & { archived: boolean; isVehicleTax: boolean };
+}
+
+export type PlanSubject =
+  | { kind: "vehicle"; category: string; ownership: string; bolloExempt: boolean }
+  | { kind: "equipment"; equipmentTypeId: string; ownership: string };
+
+export interface PlannedDeadline {
+  deadlineTypeId: string;
+  /** i valori che la scadenza avrà ereditando: si mostrano, non si scrivono */
+  effective: DeadlineTypeDefaults;
+}
+
+/**
+ * Le scadenze che nascono per un mezzo o un'attrezzatura appena creati:
+ * le regole della sua categoria (o del suo tipo).
+ *
+ * - un tipo di scadenza archiviato non genera più niente;
+ * - una regola con `ownershipKinds` vale solo per quelle proprietà (la
+ *   bombola a scambio del fornitore non ha il collaudo a carico nostro, il
+ *   mezzo a noleggio non ha il nostro bollo);
+ * - un mezzo esente non riceve la tassa automobilistica.
+ *
+ * Le scadenze si scrivono con i soli riferimenti (tipo e soggetto): i
+ * valori li ereditano. Le date non si inventano: nascono «da completare»,
+ * la prima data la scrive chi ha in mano il documento.
+ */
+export function planDeadlines(
+  subject: PlanSubject,
+  rules: ReadonlyArray<PlannableRule>,
+): PlannedDeadline[] {
+  return rules
+    .filter((r) => !r.type.archived)
+    .filter((r) => r.ownershipKinds === null || r.ownershipKinds.includes(subject.ownership))
+    .filter((r) =>
+      subject.kind === "vehicle"
+        ? r.vehicleCategory === subject.category && !(subject.bolloExempt && r.type.isVehicleTax)
+        : r.equipmentTypeId === subject.equipmentTypeId,
+    )
+    .map((r) => ({ deadlineTypeId: r.deadlineTypeId, effective: resolveRule(r.type, r) }));
 }

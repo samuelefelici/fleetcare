@@ -29,6 +29,12 @@ export function getDb(databaseUrl: string): Db {
   return _db;
 }
 
+/** La connessione grezza dietro `getDb`, per l'autocontrollo (/api/health). */
+export function getSql(databaseUrl: string): postgres.Sql {
+  getDb(databaseUrl);
+  return _client!;
+}
+
 export interface TenantContext {
   tenantId: string;
   userId: string;
@@ -56,22 +62,10 @@ export async function withTenant<T>(
   });
 }
 
-export type DocumentKind = "SGN" | "MAN" | "SIN";
-
-/** Prossimo numero documento (SGN-2026-00001, MAN-…, SIN-…), atomico per tenant e anno. */
-export async function nextDocumentNumber(
-  tx: TenantTx,
-  tenantId: string,
-  kind: DocumentKind,
-  year: number,
-): Promise<string> {
-  const rows = await tx.execute<{ last_value: number }>(sql`
-    insert into fleetcare.document_counters (tenant_id, kind, year, last_value)
-    values (${tenantId}, ${kind}, ${year}, 1)
-    on conflict (tenant_id, kind, year)
-    do update set last_value = fleetcare.document_counters.last_value + 1
-    returning last_value
-  `);
-  const value = rows[0]?.last_value ?? 1;
-  return `${kind}-${year}-${String(value).padStart(5, "0")}`;
-}
+/*
+ * Numerazione dei documenti (SGN-2026-00001, MAN-…, SIN-…): non passa
+ * dall'app. La assegna il database all'inserimento di segnalazioni,
+ * interventi e sinistri (trigger `assign_document_number`, migration 0001):
+ * il numero mandato dal client si ignora, così nessuno può occupare i
+ * numeri futuri o azzerare un contatore.
+ */

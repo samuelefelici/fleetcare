@@ -10,6 +10,10 @@
         ".next/**",
         "!.next/cache/**",
         "dist/**"
+      ],
+      "env": [
+        "SKIP_ENV_VALIDATION",
+        "NEXT_TELEMETRY_DISABLED"
       ]
     },
     "dev": {

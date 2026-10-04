@@ -10,7 +10,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { fleetcareSchema } from "./_schema";
+import { fleetcareSchema, tenantFk, tenantKey } from "./_schema";
 import { attachmentEntity, notificationKind, profileRole, supplierKind } from "./enums";
 
 /**
@@ -35,11 +35,32 @@ export const tenants = fleetcareSchema.table("tenants", {
   pec: text("pec"),
   email: text("email"),
   phone: text("phone"),
+  /**
+   * Quando il seed ha scritto il catalogo iniziale. Il catalogo si scrive
+   * una volta sola, alla nascita dell'associazione: un secondo seed non
+   * deve far risorgere tipi e regole che l'associazione ha eliminato.
+   */
+  catalogSeededAt: timestamp("catalog_seeded_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-/** Utenze dell'applicazione (Auth.js credentials). */
+/**
+ * Le persone dell'associazione: volontari, dipendenti, responsabili.
+ *
+ * I volontari segnalano dall'app sui **propri dispositivi**, quindi ognuno
+ * ha la sua persona qui: chi fa una check-list, un rifornimento, una
+ * sanificazione o una segnalazione è sempre una riga di questa tabella, e
+ * la RLS impedisce di registrare qualcosa a nome di un altro.
+ *
+ * È la rubrica interna: la leggono tutti i membri dell'associazione
+ * (serve a scrivere «segnalato da…»), per questo contiene solo ciò che è
+ * giusto che un volontario veda degli altri. Email, telefono e password
+ * stanno in `profile_accounts`, che ognuno vede solo per sé.
+ *
+ * Dati minimi per scelta (GDPR): patenti, abilitazioni e turni non sono
+ * materia del parco mezzi.
+ */
 export const profiles = fleetcareSchema.table(
   "profiles",
   {
@@ -47,17 +68,82 @@ export const profiles = fleetcareSchema.table(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
-    email: text("email").notNull(),
     fullName: text("full_name").notNull(),
     role: profileRole("role").notNull(),
-    passwordHash: text("password_hash"),
+    badgeNumber: text("badge_number"), // n. tessera / matricola del volontario
+    /** abilitato alla guida dei mezzi dell'associazione */
+    isDriver: boolean("is_driver").notNull().default(false),
+    siteId: uuid("site_id"),
     active: boolean("active").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex("profiles_tenant_email_uq").on(t.tenantId, t.email),
-    index("profiles_tenant_idx").on(t.tenantId),
+    tenantKey("profiles", t),
+    index("profiles_tenant_name_idx").on(t.tenantId, t.fullName),
+    uniqueIndex("profiles_tenant_badge_uq")
+      .on(t.tenantId, t.badgeNumber)
+      .where(sql`${t.badgeNumber} is not null`),
+    tenantFk("profiles_site_id_fk", t.tenantId, t.siteId, sites),
+  ],
+);
+
+/**
+ * Le credenziali e i recapiti di una persona, separati dalla rubrica:
+ * ognuno vede solo i propri, la direzione li gestisce. Una persona senza
+ * riga qui esiste ma non ha ancora attivato l'accesso all'app.
+ *
+ * Il login non legge questa tabella direttamente (non c'è ancora un
+ * contesto tenant): passa da `auth_find_profile`, l'unica funzione che
+ * attraversa la RLS.
+ */
+export const profileAccounts = fleetcareSchema.table(
+  "profile_accounts",
+  {
+    profileId: uuid("profile_id").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    email: text("email").notNull(),
+    phone: text("phone"),
+    /** nullo finché la persona non ha impostato la password (o se entra con link via email) */
+    passwordHash: text("password_hash"),
+    lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("profile_accounts_tenant_email_uq").on(t.tenantId, sql`lower(${t.email})`),
+    tenantFk("profile_accounts_profile_id_fk", t.tenantId, t.profileId, profiles, "cascade"),
+  ],
+);
+
+/**
+ * Le iscrizioni Web Push dei dispositivi dei volontari: è così che chi ha
+ * segnalato un guasto riceve «presa in carico», «risolta». Una persona può
+ * avere più dispositivi; un'iscrizione scaduta si cancella al primo invio
+ * fallito.
+ */
+export const pushSubscriptions = fleetcareSchema.table(
+  "push_subscriptions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    profileId: uuid("profile_id").notNull(),
+    endpoint: text("endpoint").notNull(),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    userAgent: text("user_agent"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("push_subscriptions_profile_idx").on(t.tenantId, t.profileId),
+    /* lo stesso browser può servire due persone (chi esce e chi entra): unico per persona */
+    uniqueIndex("push_subscriptions_profile_endpoint_uq").on(t.profileId, t.endpoint),
+    tenantFk("push_subscriptions_profile_id_fk", t.tenantId, t.profileId, profiles, "cascade"),
   ],
 );
 
@@ -77,46 +163,7 @@ export const sites = fleetcareSchema.table(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("sites_tenant_name_uq").on(t.tenantId, t.name)],
-);
-
-/**
- * Chi fa le cose: volontari e dipendenti che compilano check-list, fanno
- * rifornimenti, sanificano, guidano.
- *
- * Non coincide con `profiles`: in un'associazione molti volontari non
- * avranno mai un'utenza, e la check-list si compila sul tablet di sede
- * scegliendo il proprio nome. Quando un volontario ha anche l'utenza,
- * `profile_id` li lega.
- *
- * Dati minimi per scelta (GDPR): nome e numero di tessera. Patenti,
- * abilitazioni e turni non sono materia del parco mezzi.
- */
-export const crewMembers = fleetcareSchema.table(
-  "crew_members",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    tenantId: uuid("tenant_id")
-      .notNull()
-      .references(() => tenants.id),
-    fullName: text("full_name").notNull(),
-    badgeNumber: text("badge_number"), // n. tessera / matricola
-    /** abilitato alla guida dei mezzi dell'associazione */
-    isDriver: boolean("is_driver").notNull().default(false),
-    profileId: uuid("profile_id")
-      .unique()
-      .references(() => profiles.id),
-    siteId: uuid("site_id").references(() => sites.id),
-    active: boolean("active").notNull().default(true),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    index("crew_members_tenant_name_idx").on(t.tenantId, t.fullName),
-    uniqueIndex("crew_members_tenant_badge_uq")
-      .on(t.tenantId, t.badgeNumber)
-      .where(sql`${t.badgeNumber} is not null`),
-  ],
+  (t) => [tenantKey("sites", t), uniqueIndex("sites_tenant_name_uq").on(t.tenantId, t.name)],
 );
 
 /**
@@ -154,6 +201,7 @@ export const suppliers = fleetcareSchema.table(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    tenantKey("suppliers", t),
     index("suppliers_tenant_name_idx").on(t.tenantId, t.name),
     uniqueIndex("suppliers_tenant_vat_uq")
       .on(t.tenantId, t.vatNumber)
@@ -185,12 +233,13 @@ export const attachments = fleetcareSchema.table(
     mimeType: text("mime_type").notNull(),
     sizeBytes: integer("size_bytes").notNull(),
     storagePath: text("storage_path").notNull(),
-    uploadedById: uuid("uploaded_by_id").references(() => profiles.id),
+    uploadedById: uuid("uploaded_by_id").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("attachments_entity_idx").on(t.tenantId, t.entityType, t.entityId),
     check("attachments_size_ck", sql`${t.sizeBytes} >= 0`),
+    tenantFk("attachments_uploaded_by_id_fk", t.tenantId, t.uploadedById, profiles),
   ],
 );
 
@@ -202,9 +251,7 @@ export const notifications = fleetcareSchema.table(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
-    recipientId: uuid("recipient_id")
-      .notNull()
-      .references(() => profiles.id),
+    recipientId: uuid("recipient_id").notNull(),
     kind: notificationKind("kind").notNull().default("generic"),
     title: text("title").notNull(),
     body: text("body"),
@@ -212,7 +259,10 @@ export const notifications = fleetcareSchema.table(
     readAt: timestamp("read_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("notifications_recipient_idx").on(t.tenantId, t.recipientId, t.readAt)],
+  (t) => [
+    index("notifications_recipient_idx").on(t.tenantId, t.recipientId, t.readAt),
+    tenantFk("notifications_recipient_id_fk", t.tenantId, t.recipientId, profiles),
+  ],
 );
 
 /** Audit log: alimentato solo da trigger (migration 0001), mai scritto dall'app. */

@@ -1,6 +1,6 @@
 import { boolean, index, numeric, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
-import { fleetcareSchema } from "./_schema";
-import { crewMembers, profiles, suppliers, tenants } from "./core";
+import { fleetcareSchema, tenantFk, tenantKey } from "./_schema";
+import { profiles, suppliers, tenants } from "./core";
 import { accidentFault, accidentStatus } from "./enums";
 import { vehicles } from "./vehicles";
 
@@ -19,15 +19,14 @@ export const accidents = fleetcareSchema.table(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
-    number: text("number").notNull(), // SIN-YYYY-NNNNN
-    vehicleId: uuid("vehicle_id")
-      .notNull()
-      .references(() => vehicles.id),
+    /** SIN-AAAA-NNNNN: lo assegna il database all'inserimento, il valore del client si ignora */
+    number: text("number").notNull().default(""),
+    vehicleId: uuid("vehicle_id").notNull(),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
     location: text("location"),
     description: text("description").notNull(),
     /** chi guidava */
-    driverId: uuid("driver_id").references(() => crewMembers.id),
+    driverId: uuid("driver_id"),
     /** in servizio di emergenza con dispositivi supplementari attivi (art. 177 CdS) */
     duringEmergency: boolean("during_emergency").notNull().default(false),
     fault: accidentFault("fault").notNull().default("unknown"),
@@ -39,7 +38,7 @@ export const accidents = fleetcareSchema.table(
     policeReport: boolean("police_report").notNull().default(false),
     injuries: boolean("injuries").notNull().default(false),
     /** la nostra compagnia */
-    insurerId: uuid("insurer_id").references(() => suppliers.id),
+    insurerId: uuid("insurer_id"),
     claimNumber: text("claim_number"),
     estimatedDamageEur: numeric("estimated_damage_eur", { precision: 12, scale: 2 }),
     settledAmountEur: numeric("settled_amount_eur", { precision: 12, scale: 2 }),
@@ -47,13 +46,18 @@ export const accidents = fleetcareSchema.table(
     status: accidentStatus("status").notNull().default("open"),
     closedAt: timestamp("closed_at", { withTimezone: true }),
     notes: text("notes"),
-    createdById: uuid("created_by_id").references(() => profiles.id),
+    createdById: uuid("created_by_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
+    tenantKey("accidents", t),
     uniqueIndex("accidents_tenant_number_uq").on(t.tenantId, t.number),
     index("accidents_tenant_status_idx").on(t.tenantId, t.status, t.occurredAt),
     index("accidents_vehicle_idx").on(t.tenantId, t.vehicleId, t.occurredAt),
+    tenantFk("accidents_vehicle_id_fk", t.tenantId, t.vehicleId, vehicles),
+    tenantFk("accidents_driver_id_fk", t.tenantId, t.driverId, profiles),
+    tenantFk("accidents_insurer_id_fk", t.tenantId, t.insurerId, suppliers),
+    tenantFk("accidents_created_by_id_fk", t.tenantId, t.createdById, profiles),
   ],
 );
