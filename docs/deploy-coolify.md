@@ -124,6 +124,14 @@ disponibili al build, e finirebbero dentro l'immagine). **Runtime** resta
 | `SEED_TENANT_NETWORK` | `ANPAS` |
 | `SEED_TENANT_CITY` | `Camerano` |
 | `SEED_TENANT_PROVINCE` | `AN` |
+| `BOOTSTRAP_ADMIN_EMAIL` | l'email con cui entrerà la direzione |
+| `BOOTSTRAP_ADMIN_PASSWORD` | la sua password (almeno 10 caratteri) |
+| `BOOTSTRAP_ADMIN_NAME` | `Direzione` (o nome e cognome) |
+
+Le tre `BOOTSTRAP_ADMIN_*` creano la **prima utenza** della direzione, con
+cui si entra nell'app; valgono solo finché l'associazione non ha nessuna
+utenza, poi non fanno più niente e si possono togliere. La password si
+cambia dall'app.
 
 Niente `NODE_ENV`: è già nel Dockerfile. Niente preview delle PR (scheda
 **Advanced**, lascia spento *Preview Deployments*): una preview userebbe

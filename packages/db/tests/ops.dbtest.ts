@@ -11,7 +11,9 @@
  */
 import postgres from "postgres";
 import { afterAll, describe, expect, it } from "vitest";
+import { bootstrapAdmin } from "../src/ops/bootstrap-admin";
 import { localMigrations, migrationState } from "../src/ops/migrations";
+import { verifyPassword } from "../src/ops/password";
 import { scramSha256Verifier } from "../src/ops/scram";
 import { selfCheck } from "../src/ops/selfcheck";
 
@@ -186,6 +188,63 @@ describe("controllo delle migration prima di applicarle", () => {
       changed: [],
       skipped: [],
       pending: local.map((m) => m.tag),
+    });
+  });
+});
+
+describe("prima utenza della direzione", () => {
+  const SLUG = "bootstrap-dbtest";
+  const admin = { email: "direzione@bootstrap.it", password: "Camerano-2026!", name: "Direzione" };
+
+  /** con un'associazione propria, cancellata alla fine (serve il pool: niente transazione intorno) */
+  async function run(fn: () => Promise<void>) {
+    await cleanup();
+    await sql`insert into fleetcare.tenants (name, slug) values ('Bootstrap', ${SLUG})`;
+    try {
+      await fn();
+    } finally {
+      await cleanup();
+    }
+  }
+  async function cleanup() {
+    await sql`delete from fleetcare.profile_accounts where tenant_id in (select id from fleetcare.tenants where slug = ${SLUG})`;
+    await sql`delete from fleetcare.profiles where tenant_id in (select id from fleetcare.tenants where slug = ${SLUG})`;
+    await sql`delete from fleetcare.audit_logs where tenant_id in (select id from fleetcare.tenants where slug = ${SLUG})`;
+    await sql`delete from fleetcare.tenants where slug = ${SLUG}`;
+  }
+
+  it("crea persona e utenza, una volta sola", async () => {
+    await run(async () => {
+      expect(await bootstrapAdmin(sql, SLUG, admin)).toBe("created");
+      const [row] = await sql<{ role: string; name: string; hash: string }[]>`
+        select p.role, p.full_name as name, a.password_hash as hash
+          from fleetcare.profile_accounts a
+          join fleetcare.profiles p on p.id = a.profile_id
+          join fleetcare.tenants t on t.id = a.tenant_id
+         where t.slug = ${SLUG}`;
+      expect(row).toMatchObject({ role: "admin", name: "Direzione" });
+      expect(verifyPassword(admin.password, row!.hash)).toBe(true);
+      // la seconda volta (anche con un'altra password) non tocca niente
+      expect(await bootstrapAdmin(sql, SLUG, { ...admin, password: "Altra-password-1" })).toBe(
+        "already_has_accounts",
+      );
+      const [again] = await sql<{ hash: string }[]>`
+        select a.password_hash as hash from fleetcare.profile_accounts a
+          join fleetcare.tenants t on t.id = a.tenant_id where t.slug = ${SLUG}`;
+      expect(verifyPassword(admin.password, again!.hash)).toBe(true);
+    });
+  });
+
+  it("associazione sconosciuta o password debole: niente", async () => {
+    await run(async () => {
+      expect(await bootstrapAdmin(sql, "non-esiste", admin)).toBe("tenant_missing");
+      await expect(bootstrapAdmin(sql, SLUG, { ...admin, password: "corta" })).rejects.toThrow(
+        /almeno 10/,
+      );
+      const [{ n }] = await sql<{ n: number }[]>`
+        select count(*)::int as n from fleetcare.profile_accounts a
+          join fleetcare.tenants t on t.id = a.tenant_id where t.slug = ${SLUG}`;
+      expect(n).toBe(0);
     });
   });
 });

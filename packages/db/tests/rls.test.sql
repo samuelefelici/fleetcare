@@ -78,7 +78,9 @@ insert into fleetcare.profile_accounts (profile_id, tenant_id, email, phone, pas
   ('a0000000-0000-0000-0000-00000000c001', 'a0000000-0000-0000-0000-000000000000', 'crew@a.it', '333 1', 'hash-c001'),
   ('a0000000-0000-0000-0000-00000000c002', 'a0000000-0000-0000-0000-000000000000', 'due@a.it', '333 2', 'hash-c002'),
   ('a0000000-0000-0000-0000-00000000f001', 'a0000000-0000-0000-0000-000000000000', 'mezzi@a.it', null, 'hash-f001'),
-  ('b0000000-0000-0000-0000-00000000ad01', 'b0000000-0000-0000-0000-000000000000', 'admin@b.it', null, 'hash-badmin');
+  ('b0000000-0000-0000-0000-00000000ad01', 'b0000000-0000-0000-0000-000000000000', 'admin@b.it', null, 'hash-badmin'),
+  -- la stessa email in due associazioni: un volontario di due Croci
+  ('b0000000-0000-0000-0000-00000000c001', 'b0000000-0000-0000-0000-000000000000', 'due@a.it', null, 'hash-bcrew');
 
 insert into fleetcare.vehicles (id, tenant_id, internal_code, plate, category) values
   ('a0000000-0000-0000-0000-00000000d001', 'a0000000-0000-0000-0000-000000000000', '01', 'AA111AA', 'emergency_ambulance'),
@@ -170,6 +172,11 @@ do $$ begin
     'auth_find_profile trova l''utenza ignorando le maiuscole';
   assert (select count(*) from fleetcare.auth_find_profile('test-b', 'crew@a.it')) = 0,
     'auth_find_profile non trova l''utenza in un''altra associazione';
+  assert (select string_agg(tenant_slug || ':' || full_name, ',' order by tenant_slug)
+            from fleetcare.auth_find_accounts('DUE@a.it')) = 'test-a:Volontario Due,test-b:Equipaggio B',
+    'auth_find_accounts: la stessa email in due associazioni dà le due utenze, con l''associazione';
+  assert (select count(*) from fleetcare.auth_find_accounts('nessuno@a.it')) = 0,
+    'auth_find_accounts: email sconosciuta';
 end $$;
 
 -- ================= equipaggio (crew) di A =================
@@ -674,7 +681,7 @@ begin
   assert (select count(*) from fleetcare.fuel_logs) = 0, 'B: non vede i rifornimenti di A';
   assert (select count(*) from fleetcare.fuel_invoices) = 0, 'B: non vede le fatture di A';
   assert (select count(*) from fleetcare.profiles) = 2, 'B: vede solo le proprie persone';
-  assert (select count(*) from fleetcare.profile_accounts) = 1, 'B: vede solo i propri recapiti';
+  assert (select count(*) from fleetcare.profile_accounts) = 2, 'B: vede solo i propri recapiti';
   assert (select count(*) from fleetcare.tenants) = 1, 'B: vede solo la propria associazione';
 
   -- ----- riferimenti verso i dati di A: il database li rifiuta a monte -----

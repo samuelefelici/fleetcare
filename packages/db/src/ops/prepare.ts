@@ -22,7 +22,9 @@
  *      migration 0001): il backup di Coolify è un `pg_dump --no-acl`, e
  *      dopo un ripristino non ci sono più né i GRANT né la revoca di TEMP;
  *   5. se c'è SEED_TENANT_SLUG, crea l'associazione e il catalogo (una
- *      volta sola: rilanciarlo non fa niente).
+ *      volta sola: rilanciarlo non fa niente), e con BOOTSTRAP_ADMIN_* la
+ *      prima utenza della direzione, solo se non ce n'è ancora nessuna
+ *      (bootstrap-admin.ts).
  * Poi, con la connessione dell'app, l'autocontrollo (selfcheck.ts).
  *
  * Nei messaggi d'errore non compaiono mai gli URL: contengono le password.
@@ -33,6 +35,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 import { seedTenant, seedTenantFromEnv } from "../seed/seed";
+import { bootstrapAdmin, bootstrapAdminFromEnv } from "./bootstrap-admin";
 import { localMigrations, migrationState } from "./migrations";
 import { scramSha256Verifier } from "./scram";
 import { describeSelfCheck, selfCheck } from "./selfcheck";
@@ -174,7 +177,20 @@ try {
     console.log("[fleetcare] ruolo applicativo: permessi riapplicati, niente superutente né TEMP");
 
     const tenant = seedTenantFromEnv(process.env);
-    if (tenant) await seedTenant(owner, tenant);
+    if (tenant) {
+      await seedTenant(owner, tenant);
+      const admin = bootstrapAdminFromEnv(process.env);
+      if (admin) {
+        const outcome = await bootstrapAdmin(owner, tenant.slug, admin);
+        console.log(
+          outcome === "created"
+            ? `[fleetcare] prima utenza della direzione creata: ${admin.email}`
+            : outcome === "already_has_accounts"
+              ? "[fleetcare] utenze già presenti: BOOTSTRAP_ADMIN_* ignorate (si possono togliere)"
+              : "[fleetcare] BOOTSTRAP_ADMIN_*: associazione non trovata",
+        );
+      }
+    }
   } finally {
     await owner`select pg_advisory_unlock(hashtextextended('fleetcare.prepare', 0))`;
   }
