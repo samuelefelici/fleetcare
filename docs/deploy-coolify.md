@@ -190,8 +190,11 @@ Seed «Croce Gialla di Camerano»: 15 tipi di scadenza, 17 tipi di attrezzatura,
 [fleetcare] in ascolto sulla porta 3000 (GET /health)
 ```
 
-e l'applicazione risulta *Running (healthy)*. Dal *Terminal* del container:
-`wget -qO- 127.0.0.1:3000/health` → `{"ok":true}`.
+e, nel log di Coolify, «Custom healthcheck found in Dockerfile» e «New
+container is healthy»: l'applicazione risulta *Running (healthy)*. Dal
+*Terminal* del container: `wget -qO- 127.0.0.1:3000/health` →
+`{"ok":true}`. Il *Terminal* lo apre solo un owner o admin del team, e sul
+server dev'essere attivo *Terminal Access* (Servers → server → Security).
 
 Se una riga dice `NO`, il container non parte e il messaggio dice cosa
 manca. Il caso più probabile è `DATABASE_URL` scritto con l'utente
@@ -261,8 +264,17 @@ Provato in locale con i comandi esatti di Coolify su `postgres:17-alpine`:
 - **Le migration devono andare bene anche alla versione precedente.**
   Durante l'aggiornamento il vecchio container gira ancora sul database già
   migrato: si aggiunge prima, si toglie in un rilascio successivo.
+- **Una migration gira in una transazione sola** (così le applica drizzle):
+  niente `CREATE INDEX CONCURRENTLY` né altre istruzioni che non lo
+  permettono. Se una migration diventa lenta (una tabella grande), il
+  container ha circa 2 minuti per diventare sano: oltre, va alzato
+  `--start-period` nel Dockerfile.
 - **Le preview delle PR restano spente**, finché non avranno un loro
   database.
 - **I segreti stanno solo in Coolify**, mai nel repository né al build.
-- **MinIO** (documenti, foto delle segnalazioni) si aggiunge con l'app web,
-  quando c'è qualcosa da caricare.
+- **Lo storage dei documenti** (certificati, foto delle segnalazioni) si
+  sceglie con l'app web. MinIO non è più fra i servizi di Coolify e il
+  progetto è archiviato da aprile 2026: le strade sono Hetzner Object
+  Storage (lo stesso dei backup, in un altro bucket) o un servizio S3
+  self-hosted come Garage. Il codice parla S3, quindi la scelta non lo
+  cambia.
