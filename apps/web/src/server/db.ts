@@ -4,6 +4,9 @@
  * del database con l'associazione, la persona e il ruolo di chi è entrato.
  */
 import "server-only";
+import { eq } from "drizzle-orm";
+import { redirect } from "next/navigation";
+import * as schema from "@fleetcare/db";
 import { getDb, withTenant, type ProfileRole, type TenantTx } from "@fleetcare/db/client";
 import { env } from "@/env";
 import { auth } from "./auth";
@@ -40,11 +43,32 @@ export function getAppDb() {
   return getDb(env.DATABASE_URL);
 }
 
+/**
+ * La sessione di chi è entrato, verificata sulla rubrica a ogni richiesta.
+ * Il token dice chi è entrato e con quale ruolo al momento dell'accesso;
+ * la rubrica dice se è ancora vero: una persona disattivata viene fatta
+ * uscire (/uscita cancella la sessione), un ruolo cambiato vale subito,
+ * non alla scadenza del token (12 ore).
+ */
 export async function requireSession(): Promise<SessionCtx> {
   const session = await auth();
   if (!session?.user) throw new UnauthorizedError("Accesso richiesto");
   const { id, tenantId, tenantName, role, name } = session.user;
-  return { userId: id, tenantId, tenantName, role, name: name ?? "" };
+  const claimed: SessionCtx = { userId: id, tenantId, tenantName, role, name: name ?? "" };
+  const rows = await withTenant(getAppDb(), claimed, (tx) =>
+    tx
+      .select({
+        role: schema.profiles.role,
+        active: schema.profiles.active,
+        fullName: schema.profiles.fullName,
+      })
+      .from(schema.profiles)
+      .where(eq(schema.profiles.id, id))
+      .limit(1),
+  );
+  const profile = rows[0];
+  if (!profile?.active) redirect("/uscita?motivo=disattivata");
+  return { ...claimed, role: profile.role, name: profile.fullName };
 }
 
 export function hasRole(ctx: SessionCtx, roles: readonly ProfileRole[]): boolean {

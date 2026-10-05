@@ -22,18 +22,27 @@ packages/db                     @fleetcare/db
   src/seed/catalog.ts           catalogo iniziale: scadenze, attrezzature, dotazione, check-list
   src/ops/                      avvio del container: prepare.ts (migration, ruolo applicativo,
                                 permessi, seed, prima utenza, autocontrollo), password.ts
-apps/web                        l'app: Next.js 15 App Router, Tailwind v4, Auth.js (email e password)
-  src/server/auth.ts            accesso: utenza cercata in tutte le associazioni, sessione JWT
-  src/server/db.ts              ogni query dentro withTenant, con la sessione
-  src/app/                      pagine: login, mezzi, …; api/health = autocontrollo
   migrations/0000_init.sql      generata da drizzle-kit
   migrations/0001_rls_and_functions.sql   ruolo app, RLS, audit, regole del database, vista
-                                delle scadenze effettive, login, numerazione
-  tests/                        Vitest (dominio + catalogo), rls.test.sql (permessi, casi
-                                fini), matrix.test.sql (la matrice dei permessi, cella per
+                                delle scadenze effettive, numerazione
+  migrations/0002_login_accounts.sql      le funzioni dell'accesso (utenza cercata per email)
+  tests/                        Vitest (dominio + catalogo + password), rls.test.sql (permessi,
+                                casi fini), matrix.test.sql (la matrice dei permessi, cella per
                                 cella), rules.test.sql (regole del database),
                                 effective.dbtest.ts (parità fra database e TypeScript),
-                                concurrency.dbtest.ts (scritture concorrenti)
+                                concurrency.dbtest.ts (scritture concorrenti), ops.dbtest.ts
+                                (avvio del container, prima utenza)
+apps/web                        l'app: Next.js 15 App Router, Tailwind v4, Auth.js (email e password)
+  src/server/auth.ts            accesso: utenza cercata in tutte le associazioni, sessione JWT
+  src/server/db.ts              ogni query dentro withTenant, con la sessione e il ruolo
+  src/server/actions.ts         le server action: esito, mai eccezioni; errori Postgres tradotti
+  src/server/actions/, queries/ le scritture e le letture di ogni sezione
+  src/app/(app)/persone/        rubrica e utenze (direzione), /profilo (i propri dati e password)
+  src/app/(app)/mezzi/          parco mezzi: anagrafica, letture km, stato, dismissione
+  src/app/(app)/scadenze/       scadenzario: elenco per urgenza, scheda, adempimenti, correzioni
+  src/app/(app)/attrezzature/   attrezzature: scheda, spostamenti, stato, catalogo dei tipi
+  src/app/api/health            autocontrollo del container
+  tests/                        Vitest sulla logica pura dei moduli (schemi, calcoli, testi)
 Dockerfile, docker/entrypoint.sh   l'immagine per Coolify
 docs/analisi-campi.md           l'analisi
 docs/deploy-coolify.md          il deploy su Coolify, passo per passo, e il ripristino
