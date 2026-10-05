@@ -19,9 +19,13 @@ export function formValues(formData: FormData): Record<string, string> {
   return out;
 }
 
-/** La targa si salva in maiuscolo e senza spazi: «fx 123 ab» → «FX123AB». */
+/**
+ * La targa si salva in maiuscolo con sole lettere e cifre: «fx-123 ab» →
+ * «FX123AB», la stessa forma dell'indice unico del database e del
+ * riconoscimento delle fatture carburante.
+ */
 export function normalizePlate(raw: string): string {
-  return raw.toUpperCase().replace(/\s+/g, "");
+  return raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
 // ------------------------------------------------------------------
@@ -73,10 +77,26 @@ function romeOffsetMs(at: Date): number {
   return wall - Math.floor(at.getTime() / 1000) * 1000;
 }
 
+/**
+ * «2026-10-04T15:30» è una data e ora vera? Giorno di calendario e ore,
+ * minuti, secondi nei loro intervalli: Date.UTC non si lamenta di un
+ * «30 febbraio» o di «25:70», li fa traboccare al giorno dopo.
+ */
+export function isValidLocalDateTime(local: string): boolean {
+  const m = LOCAL_DATETIME.exec(local);
+  if (!m) return false;
+  return (
+    isCalendarDay(`${m[1]}-${m[2]}-${m[3]}`) &&
+    Number(m[4]) < 24 &&
+    Number(m[5]) < 60 &&
+    Number(m[6] ?? 0) < 60
+  );
+}
+
 /** «2026-10-04T15:30» (un input datetime-local) letto come ora di Roma → l'istante. */
 export function romeToDate(local: string): Date {
   const m = LOCAL_DATETIME.exec(local);
-  if (!m) throw new Error(`Data e ora non valide: ${local}`);
+  if (!m || !isValidLocalDateTime(local)) throw new Error(`Data e ora non valide: ${local}`);
   const wall = Date.UTC(
     Number(m[1]),
     Number(m[2]) - 1,
@@ -224,7 +244,7 @@ export const odometerReadingSchema = z.object({
   km: requiredInt(9_999_999),
   readAt: z
     .string({ required_error: "obbligatorio" })
-    .regex(LOCAL_DATETIME, "data e ora non valide")
+    .refine(isValidLocalDateTime, "data e ora non valide")
     .transform(romeToDate),
 });
 

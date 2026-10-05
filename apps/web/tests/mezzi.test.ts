@@ -38,6 +38,7 @@ function issue(result: z.SafeParseReturnType<unknown, unknown>): string {
 describe("normalizePlate", () => {
   it("maiuscolo e senza spazi", () => {
     expect(normalizePlate("fx 123 ab")).toBe("FX123AB");
+    expect(normalizePlate("fx-123-ab")).toBe("FX123AB");
     expect(normalizePlate(" AB123CD ")).toBe("AB123CD");
   });
 });
@@ -253,6 +254,17 @@ describe("date e ore di Roma", () => {
     expect(isCalendarDay("2026-13-01")).toBe(false);
     expect(isCalendarDay("0026-01-01")).toBe(false);
     expect(isCalendarDay("2026-1-1")).toBe(false);
+  });
+
+  it("romeToDate: un «30 febbraio» o un «25:70» non traboccano al giorno dopo", () => {
+    expect(() => romeToDate("2026-02-30T10:00")).toThrow();
+    expect(() => romeToDate("2026-10-04T25:70")).toThrow();
+    expect(() => romeToDate("2026-13-01T10:00")).toThrow();
+    expect(
+      issue(
+        odometerReadingSchema.safeParse({ vehicleId: UUID, km: "10", readAt: "2026-02-30T10:00" }),
+      ),
+    ).toBe("readAt: data e ora non valide");
   });
 
   it("romeToDate: ora solare e ora legale", () => {

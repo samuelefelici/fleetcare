@@ -18,6 +18,9 @@ import {
   type Semaphore,
 } from "@fleetcare/db/domain/deadlines";
 import { fmtKm } from "@/lib/format";
+import { parseEuro } from "@/lib/euro";
+
+export { parseEuro };
 
 // ------------------------------------------------------------------
 // Etichette
@@ -418,18 +421,6 @@ export function formValues(formData: FormData): Record<string, string> {
     if (typeof value === "string") out[key] = value;
   }
   return out;
-}
-
-/**
- * «1.234,50», «1234,5» o «1234.5» → «1234.50» (la colonna numeric vuole una
- * stringa con il punto); null se vuoto, undefined se non è un importo.
- */
-export function parseEuro(raw: string): string | null | undefined {
-  const s = raw.trim().replace(/\s|€/g, "");
-  if (s === "") return null;
-  const normalized = s.includes(",") ? s.replace(/\./g, "").replace(",", ".") : s;
-  if (!/^\d+(\.\d{1,2})?$/.test(normalized)) return undefined;
-  return Number(normalized).toFixed(2);
 }
 
 // ------------------------------------------------------------------

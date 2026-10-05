@@ -361,6 +361,7 @@ describe("dati in ingresso", () => {
     expect(parseEuro("abc")).toBeUndefined();
     expect(parseEuro("12,345")).toBeUndefined();
     expect(parseEuro("-5")).toBeUndefined();
+    expect(parseEuro("99999999999999,00")).toBeUndefined();
   });
 });
 

@@ -98,6 +98,14 @@ describe("editPersonSchema e gli schemi dell'utenza", () => {
     if (!empty.success) expect(empty.error.issues[0]?.message).toBe("Scrivi l'email");
   });
 
+  it("la password iniziale non si ritaglia: al login gli spazi contano", () => {
+    const r = newPersonSchema.safeParse(
+      formValues(form({ nome: "Prova Spazi", ruolo: "crew", password: "  Prova-Spazi-2026  " })),
+    );
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.password).toBe("  Prova-Spazi-2026  ");
+  });
+
   it("la password temporanea segue le regole di @fleetcare/db", () => {
     const short = tempPasswordSchema.safeParse(formValues(form({ id: ID, password: "corta" })));
     expect(short.success).toBe(false);

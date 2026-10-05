@@ -5,9 +5,16 @@
  * il pulsante, il successo come toast e, se c'è `redirectTo`, la
  * navigazione. L'azione ha la firma di `useActionState`:
  *   (precedente: ActionResult | null, dati: FormData) => Promise<ActionResult>
+ *
+ * L'invio passa da `onSubmit` e non dal solo `action`: React 19 svuota il
+ * modulo appena l'azione finisce, anche quando l'esito è un errore, e un
+ * modulo di venti campi da riscrivere per una targa sbagliata non va bene.
+ * Così i campi restano com'erano finché l'azione non riesce; al successo
+ * senza navigazione il modulo si svuota da solo. Senza JavaScript vale
+ * ancora `action`.
  */
 import { useRouter } from "next/navigation";
-import { useActionState, useEffect, type ReactNode } from "react";
+import { startTransition, useActionState, useEffect, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
 import type { ActionResult } from "@/server/actions";
 import { buttonClass, type ButtonVariant } from "./ui";
@@ -33,6 +40,7 @@ export function ActionForm({
   className?: string;
 }) {
   const router = useRouter();
+  const formRef = useRef<HTMLFormElement>(null);
   const [state, formAction, pending] = useActionState(action, null);
 
   useEffect(() => {
@@ -41,12 +49,22 @@ export function ActionForm({
     if (redirectTo) {
       router.push(typeof redirectTo === "function" ? redirectTo(state.id) : redirectTo);
     } else {
+      formRef.current?.reset();
       router.refresh();
     }
   }, [state, successMessage, redirectTo, router]);
 
   return (
-    <form action={formAction} className={className}>
+    <form
+      ref={formRef}
+      action={formAction}
+      onSubmit={(e) => {
+        e.preventDefault();
+        const data = new FormData(e.currentTarget);
+        startTransition(() => formAction(data));
+      }}
+      className={className}
+    >
       {children}
       {state && !state.ok && (
         <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-danger">
