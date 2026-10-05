@@ -62,6 +62,13 @@ export default async function EquipmentListPage({
 
   return (
     <>
+      {vehicle && (
+        <p className="mb-2 text-sm">
+          <Link href={`/mezzi/${vehicle.id}`} className="underline">
+            ← Mezzo {vehicle.internalCode} · {vehicle.plate}
+          </Link>
+        </p>
+      )}
       <PageHeader
         title={title}
         subtitle={
@@ -94,6 +101,11 @@ export default async function EquipmentListPage({
         }
         actions={
           <>
+            {vehicle && (
+              <ButtonLink href={`/mezzi/${vehicle.id}`} variant="secondary">
+                Scheda del mezzo
+              </ButtonLink>
+            )}
             <ButtonLink href="/attrezzature/tipi" variant="secondary">
               Catalogo dei tipi
             </ButtonLink>

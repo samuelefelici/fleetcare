@@ -40,10 +40,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <div className="truncate text-xs text-zinc-500">{user.tenantName}</div>
           </div>
         </div>
-        <nav
-          aria-label="Sezioni"
-          className="flex gap-1 overflow-x-auto px-3 pb-3 md:flex-col md:pb-0"
-        >
+        <nav aria-label="Sezioni" className="flex flex-wrap gap-1 px-3 pb-3 md:flex-col md:pb-0">
           {items.map((n) => (
             <Link
               key={n.href}

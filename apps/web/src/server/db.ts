@@ -8,6 +8,7 @@ import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import * as schema from "@fleetcare/db";
 import { getDb, withTenant, type ProfileRole, type TenantTx } from "@fleetcare/db/client";
+import { PROFILE_ROLE_LABELS } from "@fleetcare/db/domain/labels";
 import { env } from "@/env";
 import { auth } from "./auth";
 
@@ -31,13 +32,8 @@ export const STAFF: readonly ProfileRole[] = [
 export const FLEET: readonly ProfileRole[] = ["admin", "fleet_manager"];
 export const EQUIPMENT: readonly ProfileRole[] = ["admin", "fleet_manager", "equipment_manager"];
 
-export const ROLE_LABELS: Record<ProfileRole, string> = {
-  crew: "Equipaggio",
-  fleet_manager: "Responsabile mezzi",
-  equipment_manager: "Responsabile materiale",
-  admin_finance: "Amministrazione",
-  admin: "Direzione",
-};
+/** Le etichette dei ruoli: quelle di @fleetcare/db, un nome solo in tutta l'app. */
+export const ROLE_LABELS: Record<ProfileRole, string> = PROFILE_ROLE_LABELS;
 
 export function getAppDb() {
   return getDb(env.DATABASE_URL);
