@@ -332,6 +332,7 @@ export default async function VehiclePage({
                 submitLabel="Dismetti il mezzo"
                 submitVariant="danger"
                 successMessage="Mezzo dismesso"
+                confirm={`Dismettere il mezzo ${v.internalCode} · ${v.plate}? Esce dalla flotta; resta in archivio con letture e scadenze.`}
               >
                 <input type="hidden" name="vehicleId" value={v.id} />
                 <Field label="Data" htmlFor="decommissionedOn" required>

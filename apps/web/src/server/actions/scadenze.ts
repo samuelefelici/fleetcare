@@ -16,6 +16,7 @@
  */
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { unstable_rethrow } from "next/navigation";
 import * as schema from "@fleetcare/db";
 import { formValues, specialDbMessage } from "@/app/(app)/scadenze/logica";
 import {
@@ -41,6 +42,8 @@ const ARCHIVED = "La scadenza è archiviata: non si modifica più";
 
 /** L'errore del database come esito: prima le frasi dello scadenzario, poi la traduzione comune. */
 function dbFail(error: unknown): ActionResult {
+  // un redirect (la sessione fatta uscire) non è un errore da tradurre
+  unstable_rethrow(error);
   const cause = unwrapDbError(error);
   return fail(specialDbMessage(cause) ?? dbErrorMessage(cause));
 }

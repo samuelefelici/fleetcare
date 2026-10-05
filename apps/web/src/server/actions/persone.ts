@@ -10,6 +10,7 @@
  */
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { unstable_rethrow } from "next/navigation";
 import { z } from "zod";
 import * as schema from "@fleetcare/db";
 import { hashPassword, verifyPassword } from "@fleetcare/db/ops/password";
@@ -33,6 +34,8 @@ const DIREZIONE = ["admin"] as const;
 
 /** L'errore del database come esito: prima i doppioni (email, tessera), poi la traduzione comune. */
 function dbFail(error: unknown): ActionResult {
+  // un redirect (la sessione fatta uscire) non è un errore da tradurre
+  unstable_rethrow(error);
   const cause = unwrapDbError(error);
   return fail(uniqueViolationMessage(cause) ?? dbErrorMessage(cause));
 }
@@ -182,17 +185,13 @@ export async function setPersonEmail(
     const ctx = await requireSession();
     requireRole(ctx, DIREZIONE);
     try {
-      await run(async (tx) => {
-        const [existing] = await tx
-          .update(schema.profileAccounts)
-          .set({ email })
-          .where(eq(schema.profileAccounts.profileId, id))
-          .returning({ profileId: schema.profileAccounts.profileId });
-        if (existing) return;
-        await tx
+      // un solo upsert: due richieste insieme non si pestano i piedi
+      await run((tx) =>
+        tx
           .insert(schema.profileAccounts)
-          .values({ profileId: id, tenantId: ctx.tenantId, email });
-      });
+          .values({ profileId: id, tenantId: ctx.tenantId, email })
+          .onConflictDoUpdate({ target: schema.profileAccounts.profileId, set: { email } }),
+      );
       revalidatePerson(id);
       return id;
     } catch (error) {
@@ -244,11 +243,14 @@ export async function changeOwnPassword(
 
     try {
       const outcome = await run(async (tx, ctx) => {
+        // la riga resta bloccata fino alla scrittura: una password temporanea
+        // messa nel frattempo dalla direzione non viene sovrascritta alla cieca
         const [account] = await tx
           .select({ passwordHash: schema.profileAccounts.passwordHash })
           .from(schema.profileAccounts)
           .where(eq(schema.profileAccounts.profileId, ctx.userId))
-          .limit(1);
+          .limit(1)
+          .for("update");
         if (!account) return "no-account" as const;
         if (!verifyPassword(attuale, account.passwordHash)) return "wrong" as const;
         await tx

@@ -41,6 +41,12 @@ export default async function NewEquipmentPage({
     vehicleId: presetVehicle,
     siteId: presetVehicle ? null : presetSite,
   });
+  // si torna da dove si è partiti: la dotazione del mezzo o della sede
+  const backHref = presetVehicle
+    ? `/attrezzature?mezzo=${presetVehicle}`
+    : presetSite
+      ? `/attrezzature?sede=${presetSite}`
+      : "/attrezzature";
 
   return (
     <>
@@ -50,7 +56,7 @@ export default async function NewEquipmentPage({
           <>
             Con l'attrezzatura nascono le scadenze previste dal catalogo per il suo tipo, da
             completare con le date dei documenti.{" "}
-            <Link href="/attrezzature" className="underline">
+            <Link href={backHref} className="underline">
               Torna all'elenco
             </Link>
           </>

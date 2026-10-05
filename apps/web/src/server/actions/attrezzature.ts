@@ -22,7 +22,18 @@ import {
 import { attempt, fail, unwrapDbError, zodMessage, type ActionResult } from "@/server/actions";
 import { EQUIPMENT, requireRole, requireSession, run } from "@/server/db";
 import { createDeadlinesFor } from "@/server/deadlines";
-import { getEquipmentPlace } from "@/server/queries/attrezzature";
+import { getEquipmentPlace, getVehicleStatus } from "@/server/queries/attrezzature";
+import type { TenantTx } from "@fleetcare/db/client";
+
+const VEHICLE_DISMISSED = "Il mezzo è dismesso: scegli un altro mezzo o una sede";
+
+/** Il mezzo di destinazione deve esistere ed essere in flotta: la tendina lo nasconde, l'azione lo verifica. */
+async function destinationProblem(tx: TenantTx, vehicleId: string | null): Promise<string | null> {
+  if (!vehicleId) return null;
+  const status = await getVehicleStatus(tx, vehicleId);
+  if (!status) return "Mezzo non trovato";
+  return status === "decommissioned" ? VEHICLE_DISMISSED : null;
+}
 
 function revalidateEquipment(id: string) {
   revalidatePath("/attrezzature");
@@ -48,9 +59,11 @@ export async function createEquipment(
     const session = await requireSession();
     requireRole(session, EQUIPMENT);
     const { place, ...data } = parsed.data;
-    let id: string;
+    let outcome: string | ActionResult;
     try {
-      id = await run(async (tx, ctx) => {
+      outcome = await run(async (tx, ctx) => {
+        const problem = await destinationProblem(tx, place.vehicleId);
+        if (problem) return fail(problem);
         const [row] = await tx
           .insert(schema.equipment)
           .values({
@@ -72,8 +85,9 @@ export async function createEquipment(
       if (inventoryCodeTaken(error)) return fail(INVENTORY_TAKEN);
       throw error;
     }
-    revalidateEquipment(id);
-    return id;
+    if (typeof outcome !== "string") return outcome;
+    revalidateEquipment(outcome);
+    return outcome;
   });
 }
 
@@ -126,6 +140,8 @@ export async function moveEquipment(
       const current = await getEquipmentPlace(tx, equipmentId);
       if (!current) return fail("Attrezzatura non trovata");
       if (samePlace(current, place)) return fail("L'attrezzatura è già lì");
+      const problem = await destinationProblem(tx, place.vehicleId);
+      if (problem) return fail(problem);
       await tx
         .update(schema.equipment)
         .set({ vehicleId: place.vehicleId, siteId: place.siteId })

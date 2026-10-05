@@ -95,6 +95,7 @@ export async function getEquipment(tx: TenantTx, id: string) {
       missionCritical: t.missionCritical,
       vehicleCode: v.internalCode,
       vehiclePlate: v.plate,
+      vehicleStatus: v.status,
       siteName: s.name,
     })
     .from(e)
@@ -109,13 +110,21 @@ export async function getEquipment(tx: TenantTx, id: string) {
 export type EquipmentRow = NonNullable<Awaited<ReturnType<typeof getEquipment>>>;
 
 /** Solo ciò che serve alle azioni: dove sta e in che stato è. */
+/** La posizione attuale, con la riga bloccata: due «Sposta» insieme si mettono in fila. */
 export async function getEquipmentPlace(tx: TenantTx, id: string) {
   const rows = await tx
     .select({ id: e.id, vehicleId: e.vehicleId, siteId: e.siteId, status: e.status })
     .from(e)
     .where(eq(e.id, id))
-    .limit(1);
+    .limit(1)
+    .for("update");
   return rows[0] ?? null;
+}
+
+/** Lo stato di un mezzo di destinazione; null se non c'è (o non è di questa associazione). */
+export async function getVehicleStatus(tx: TenantTx, id: string) {
+  const rows = await tx.select({ status: v.status }).from(v).where(eq(v.id, id)).limit(1);
+  return rows[0]?.status ?? null;
 }
 
 /** Lo storico degli spostamenti, dal più recente, con i nomi di mezzi, sedi e di chi ha spostato. */

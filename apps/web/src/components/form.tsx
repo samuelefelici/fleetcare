@@ -28,6 +28,7 @@ export function ActionForm({
   submitVariant = "primary",
   successMessage = "Salvato",
   redirectTo,
+  confirm,
   className = "space-y-4",
 }: {
   action: FormAction;
@@ -37,6 +38,8 @@ export function ActionForm({
   successMessage?: string | null;
   /** dove andare dopo il successo; `(id) => url` se l'azione restituisce un id */
   redirectTo?: string | ((id: string | undefined) => string);
+  /** una domanda prima di inviare, per le azioni che pesano (dismettere un mezzo) */
+  confirm?: string;
   className?: string;
 }) {
   const router = useRouter();
@@ -60,6 +63,7 @@ export function ActionForm({
       action={formAction}
       onSubmit={(e) => {
         e.preventDefault();
+        if (confirm && !window.confirm(confirm)) return;
         const data = new FormData(e.currentTarget);
         startTransition(() => formAction(data));
       }}

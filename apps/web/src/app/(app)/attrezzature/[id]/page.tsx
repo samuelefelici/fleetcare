@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { EQUIPMENT_GROUP_LABELS } from "@fleetcare/db/domain/labels";
 import { ActionButton, ActionForm } from "@/components/form";
-import { ButtonLink, Card, Details, Field, PageHeader, inputClass } from "@/components/ui";
+import { Badge, ButtonLink, Card, Details, Field, PageHeader, inputClass } from "@/components/ui";
 import { fmtDay, fmtDayTime, fmtEur } from "@/lib/format";
 import { moveEquipment, setEquipmentStatus } from "@/server/actions/attrezzature";
 import { EQUIPMENT, hasRole, run } from "@/server/db";
@@ -59,7 +59,21 @@ export default async function EquipmentPage({
     };
   });
   if (!data) notFound();
-  const { item: e, movements, deadlineCount, vehicles, sites, canWrite } = data;
+  const { item: e, movements, deadlineCount, sites, canWrite } = data;
+  // il mezzo attuale resta in tendina anche se dismesso: altrimenti il browser
+  // sceglierebbe «Nessuna collocazione» e «Sposta» toglierebbe l'attrezzatura in silenzio
+  const hostDismissed = e.vehicleStatus === "decommissioned";
+  const vehicles =
+    e.vehicleId && !data.vehicles.some((x) => x.id === e.vehicleId)
+      ? [
+          {
+            id: e.vehicleId,
+            internalCode: `${e.vehicleCode ?? "?"} (dismesso)`,
+            plate: e.vehiclePlate ?? "",
+          },
+          ...data.vehicles,
+        ]
+      : data.vehicles;
 
   const makeModel = [e.manufacturer, e.model].filter(Boolean).join(" ");
   const where = placeLabel({ vehicleCode: e.vehicleCode, siteName: e.siteName });
@@ -173,6 +187,11 @@ export default async function EquipmentPage({
             )}
             {e.vehiclePlate && (
               <span className="font-normal text-zinc-500"> · {e.vehiclePlate}</span>
+            )}
+            {hostDismissed && (
+              <span className="ml-2 align-middle">
+                <Badge tone="neutral">Mezzo dismesso</Badge>
+              </span>
             )}
           </p>
           {e.positionNote && <p className="text-sm text-zinc-600">{e.positionNote}</p>}
