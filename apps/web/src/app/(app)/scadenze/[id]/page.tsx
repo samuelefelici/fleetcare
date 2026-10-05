@@ -284,6 +284,7 @@ export default async function DeadlinePage({ params }: { params: Promise<{ id: s
             </p>
             {canRecord ? (
               <RegistraAdempimento
+                key={completions.length}
                 deadlineId={s.id}
                 today={today}
                 isVehicle={isVehicle}

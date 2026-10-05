@@ -13,6 +13,9 @@
 import { z } from "zod";
 import { equipmentStatus, ownershipKind } from "@fleetcare/db";
 import type { EquipmentStatus } from "./labels";
+import { parseEuro } from "@/lib/euro";
+
+export { parseEuro };
 
 /** I campi di un FormData come oggetto di stringhe: i file si ignorano. */
 export function formValues(formData: FormData): Record<string, string> {
@@ -42,22 +45,6 @@ export function isCalendarDay(iso: string): boolean {
   if (y < 1900 || y > 2999 || mo < 1 || mo > 12 || d < 1) return false;
   const probe = new Date(Date.UTC(y, mo - 1, d));
   return probe.getUTCMonth() === mo - 1 && probe.getUTCDate() === d;
-}
-
-/**
- * Un importo scritto come lo scrive una persona: «1.234,50», «1234,5»,
- * «1234.50» → «1234.50» (la colonna numeric vuole una stringa con il
- * punto). Vuoto → null, non un numero → undefined.
- */
-export function parseEuro(raw: string): string | null | undefined {
-  const s = raw.replace(/[\s€]/g, "");
-  if (s === "") return null;
-  // con la virgola è notazione italiana: i punti sono le migliaia
-  const normalized = s.includes(",") ? s.replace(/\./g, "").replace(",", ".") : s;
-  if (!/^\d+(\.\d{1,2})?$/.test(normalized)) return undefined;
-  const n = Number(normalized);
-  if (!Number.isFinite(n) || n > 9_999_999_999.99) return undefined;
-  return n.toFixed(2);
 }
 
 // ------------------------------------------------------------------

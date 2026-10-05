@@ -57,7 +57,11 @@ const personFields = {
 export const newPersonSchema = z.object({
   ...personFields,
   email: optionalText(200, "Email").pipe(email.nullable()),
-  password: optionalText(200, "Password"),
+  // non si ritaglia: al login la password vale così com'è scritta
+  password: z.preprocess(
+    (v) => (v === undefined || v === null || v === "" ? null : v),
+    z.string().max(200, "Password: troppo lunga").nullable(),
+  ),
 });
 export type NewPersonInput = z.infer<typeof newPersonSchema>;
 

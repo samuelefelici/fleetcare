@@ -141,7 +141,7 @@ export function VehicleFields({
           maxLength={20}
           placeholder="AB123CD"
           className="uppercase"
-          hint="Si salva in maiuscolo, senza spazi"
+          hint="Si salva in maiuscolo, solo lettere e cifre"
         />
         <Field label="Categoria" htmlFor="category" required>
           <select

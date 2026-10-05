@@ -62,6 +62,8 @@ export function dbErrorMessage(error: unknown): string {
     case "22007":
     case "22008":
       return "Formato non valido (data o numero)";
+    case "22003":
+      return "Numero troppo grande";
     default:
       console.error("[action]", error);
       return "Operazione non riuscita";
