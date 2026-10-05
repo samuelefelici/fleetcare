@@ -6,6 +6,7 @@
  * i trigger e i vincoli parlano già italiano, qui si traducono i codici.
  */
 import "server-only";
+import { unstable_rethrow } from "next/navigation";
 import type { ZodError } from "zod";
 import { ForbiddenError, UnauthorizedError } from "./db";
 
@@ -76,6 +77,8 @@ export async function attempt(
     if (typeof out === "string") return { ok: true, id: out };
     return out ?? { ok: true };
   } catch (error) {
+    // un redirect (la sessione fatta uscire) non è un errore da tradurre
+    unstable_rethrow(error);
     return fail(dbErrorMessage(error));
   }
 }

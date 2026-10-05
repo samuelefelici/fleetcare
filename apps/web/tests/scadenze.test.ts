@@ -25,6 +25,7 @@ import {
   sortByUrgency,
   specialDbMessage,
   stateText,
+  subjectDismissed,
   subjectHref,
   subjectLabel,
   subjectListHref,
@@ -382,7 +383,7 @@ describe("setDueSchema", () => {
 
 describe("completionSchema", () => {
   const schema = completionSchema(TODAY);
-  const BASE = { id: UUID, data: "2026-10-01", esito: "passed" };
+  const BASE = { id: UUID, data: "2026-10-01", esito: "passed", prossima_data: "2027-10-01" };
 
   it("il modulo minimo passa, con i facoltativi a null", () => {
     const r = schema.safeParse(BASE);
@@ -393,13 +394,36 @@ describe("completionSchema", () => {
       data: "2026-10-01",
       km: null,
       esito: "passed",
-      prossima_data: null,
+      prossima_data: "2027-10-01",
       prossima_km: null,
       costo: null,
       fornitore: null,
       documento: null,
       note: null,
     });
+  });
+
+  it("«fatto» senza prossima scadenza non passa: il database lascerebbe tutto com'era", () => {
+    expect(issue(schema.safeParse({ ...BASE, prossima_data: "" }))).toBe(
+      "prossima_data: serve la prossima scadenza (data o km): si legge dal documento",
+    );
+    expect(schema.safeParse({ ...BASE, prossima_data: "", prossima_km: "150000" }).success).toBe(
+      true,
+    );
+  });
+
+  it("«non superato» passa anche senza prossima scadenza", () => {
+    expect(schema.safeParse({ ...BASE, esito: "failed", prossima_data: "" }).success).toBe(true);
+  });
+
+  it("la prossima scadenza non può precedere l'adempimento (data e km)", () => {
+    expect(issue(schema.safeParse({ ...BASE, prossima_data: "2025-10-05" }))).toBe(
+      "prossima_data: non può precedere la data dell'adempimento",
+    );
+    expect(issue(schema.safeParse({ ...BASE, km: "120350", prossima_km: "100" }))).toBe(
+      "prossima_km: non possono essere meno dei km dell'adempimento",
+    );
+    expect(schema.safeParse({ ...BASE, prossima_data: "2026-10-01" }).success).toBe(true);
   });
 
   it("tutti i campi: costo come stringa con il punto, fornitore uuid", () => {
@@ -551,5 +575,14 @@ describe("specialDbMessage", () => {
     expect(specialDbMessage({ code: "P0001", message: "x" })).toBeNull();
     expect(specialDbMessage(new Error("boh"))).toBeNull();
     expect(specialDbMessage(null)).toBeNull();
+  });
+});
+
+describe("subjectDismissed", () => {
+  it("riconosce il mezzo dismesso e l'attrezzatura dismessa", () => {
+    expect(subjectDismissed({ vehicleStatus: "decommissioned" })).toBe("Mezzo dismesso");
+    expect(subjectDismissed({ equipmentStatus: "disposed" })).toBe("Attrezzatura dismessa");
+    expect(subjectDismissed({ vehicleStatus: "operational", equipmentStatus: null })).toBeNull();
+    expect(subjectDismissed({})).toBeNull();
   });
 });

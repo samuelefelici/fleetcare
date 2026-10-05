@@ -14,7 +14,7 @@
  * Le righe toccate si contano: una policy di UPDATE non rifiuta la riga
  * che non si può toccare, la salta.
  */
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import * as schema from "@fleetcare/db";
 import { formValues, specialDbMessage } from "@/app/(app)/scadenze/logica";
@@ -37,6 +37,7 @@ import {
 import { EQUIPMENT, STAFF, requireRole, requireSession, run } from "@/server/db";
 
 const NOT_FOUND = "Scadenza non trovata, o non è un'operazione del tuo ruolo";
+const ARCHIVED = "La scadenza è archiviata: non si modifica più";
 
 /** L'errore del database come esito: prima le frasi dello scadenzario, poi la traduzione comune. */
 function dbFail(error: unknown): ActionResult {
@@ -69,7 +70,7 @@ export async function setDeadlineDue(
         tx
           .update(schema.deadlines)
           .set({ dueOn: input.data, dueKm: input.km, notes: input.note })
-          .where(eq(schema.deadlines.id, input.id))
+          .where(and(eq(schema.deadlines.id, input.id), isNull(schema.deadlines.archivedAt)))
           .returning({ id: schema.deadlines.id }),
       );
       if (updated.length === 0) return fail(NOT_FOUND);
@@ -93,7 +94,16 @@ export async function recordCompletion(
     const session = await requireSession();
     requireRole(session, STAFF);
     try {
-      const id = await run(async (tx, ctx) => {
+      const outcome = await run(async (tx, ctx) => {
+        // una scadenza archiviata non compare più nello scadenzario: una
+        // pagina aperta prima dell'archiviazione non deve scriverci sopra
+        const [target] = await tx
+          .select({ archivedAt: schema.deadlines.archivedAt })
+          .from(schema.deadlines)
+          .where(eq(schema.deadlines.id, input.id))
+          .limit(1);
+        if (!target) return fail(NOT_FOUND);
+        if (target.archivedAt) return fail(ARCHIVED);
         const [row] = await tx
           .insert(schema.deadlineCompletions)
           .values({
@@ -114,8 +124,9 @@ export async function recordCompletion(
         if (!row) throw new Error("Adempimento senza riga di ritorno");
         return row.id;
       });
+      if (typeof outcome !== "string") return outcome;
       revalidateDeadline(input.id);
-      return id;
+      return outcome;
     } catch (error) {
       return dbFail(error);
     }
@@ -145,7 +156,7 @@ export async function overrideDeadline(
             alertKm: input.preavviso_km,
             blocking: input.blocco,
           })
-          .where(eq(schema.deadlines.id, input.id))
+          .where(and(eq(schema.deadlines.id, input.id), isNull(schema.deadlines.archivedAt)))
           .returning({ id: schema.deadlines.id }),
       );
       if (updated.length === 0) return fail(NOT_FOUND);

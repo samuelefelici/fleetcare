@@ -17,6 +17,7 @@ import {
   sortByUrgency,
   STATO_FILTRI,
   stateText,
+  subjectDismissed,
   subjectLabel,
 } from "./logica";
 
@@ -167,7 +168,14 @@ export default async function DeadlinesPage({
                 className="grid gap-x-4 gap-y-1 px-4 py-3 hover:bg-zinc-50 sm:grid-cols-[1.2fr_1.4fr_1fr_1.1fr] sm:items-center"
               >
                 <div className="min-w-0">
-                  <div className="font-semibold">{row.subjectLabel}</div>
+                  <div className="font-semibold">
+                    {row.subjectLabel}
+                    {subjectDismissed(row) && (
+                      <span className="ml-2 align-middle">
+                        <Badge tone="neutral">{subjectDismissed(row)}</Badge>
+                      </span>
+                    )}
+                  </div>
                   {row.equipmentId && row.hostVehicleCode && (
                     <div className="text-xs text-zinc-500">
                       a bordo di {row.hostVehicleCode} · {row.hostVehiclePlate}

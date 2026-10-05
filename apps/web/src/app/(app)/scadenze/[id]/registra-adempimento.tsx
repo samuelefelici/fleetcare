@@ -133,6 +133,7 @@ export function RegistraAdempimento({
             id="adempimento-prossima-data"
             name="prossima_data"
             type="date"
+            required={!periodic && !hasKm}
             value={nextOnValue}
             onChange={(e) => setNextOn(e.target.value)}
             className={inputClass}

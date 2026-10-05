@@ -230,6 +230,16 @@ export interface SubjectFields {
   equipmentInventory: string | null;
 }
 
+/** «Mezzo dismesso» / «Attrezzatura dismessa», o null se il soggetto è in flotta. */
+export function subjectDismissed(s: {
+  vehicleStatus?: string | null;
+  equipmentStatus?: string | null;
+}): string | null {
+  if (s.vehicleStatus === "decommissioned") return "Mezzo dismesso";
+  if (s.equipmentStatus === "disposed") return "Attrezzatura dismessa";
+  return null;
+}
+
 /** «12 · FX123AB» per un mezzo; «DAE · matr. 12345» per un'attrezzatura. */
 export function subjectLabel(s: SubjectFields): string {
   if (s.vehicleId) return `${s.vehicleCode ?? "?"} · ${s.vehiclePlate ?? "?"}`;

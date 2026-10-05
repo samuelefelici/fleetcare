@@ -77,23 +77,39 @@ export type SetDueInput = z.infer<typeof setDueSchema>;
 
 /** (b) «Registra adempimento»: la data non può essere nel futuro (lo rifiuta anche il database). */
 export function completionSchema(today: string) {
-  return z
-    .object({
-      id: uuidField("scadenza"),
-      data: requiredDay,
-      km: optionalInt(0, KM_MAX),
-      esito: enumField(COMPLETION_OUTCOMES),
-      prossima_data: optionalDay,
-      prossima_km: optionalInt(0, KM_MAX),
-      costo: optionalEuro,
-      fornitore: optionalUuid("fornitore"),
-      documento: optionalText(200),
-      note: optionalText(2000),
-    })
-    .refine((v) => v.data <= today, {
-      path: ["data"],
-      message: "un adempimento non può avere una data futura",
-    });
+  return (
+    z
+      .object({
+        id: uuidField("scadenza"),
+        data: requiredDay,
+        km: optionalInt(0, KM_MAX),
+        esito: enumField(COMPLETION_OUTCOMES),
+        prossima_data: optionalDay,
+        prossima_km: optionalInt(0, KM_MAX),
+        costo: optionalEuro,
+        fornitore: optionalUuid("fornitore"),
+        documento: optionalText(200),
+        note: optionalText(2000),
+      })
+      .refine((v) => v.data <= today, {
+        path: ["data"],
+        message: "un adempimento non può avere una data futura",
+      })
+      // senza una prossima scadenza il database lascia tutto com'era: la
+      // scadenza resterebbe scaduta con un adempimento «fatto» nello storico
+      .refine((v) => v.esito === "failed" || v.prossima_data !== null || v.prossima_km !== null, {
+        path: ["prossima_data"],
+        message: "serve la prossima scadenza (data o km): si legge dal documento",
+      })
+      .refine((v) => v.prossima_data === null || v.prossima_data >= v.data, {
+        path: ["prossima_data"],
+        message: "non può precedere la data dell'adempimento",
+      })
+      .refine((v) => v.prossima_km === null || v.km === null || v.prossima_km >= v.km, {
+        path: ["prossima_km"],
+        message: "non possono essere meno dei km dell'adempimento",
+      })
+  );
 }
 export type CompletionInput = z.infer<ReturnType<typeof completionSchema>>;
 

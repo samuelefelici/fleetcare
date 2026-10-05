@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { auth, signOut } from "@/server/auth";
-import { ROLE_LABELS, STAFF } from "@/server/db";
+import { signOut } from "@/server/auth";
+import { ROLE_LABELS, STAFF, UnauthorizedError, requireSession } from "@/server/db";
 
 const NAV = [
   { href: "/mezzi", label: "Mezzi", staffOnly: false },
@@ -12,9 +12,12 @@ const NAV = [
 ] as const;
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  const { user } = session;
+  // La sessione verificata sulla rubrica: il ruolo è quello di adesso, non
+  // quello del momento dell'accesso; chi è stato disattivato viene fatto uscire.
+  const user = await requireSession().catch((error: unknown) =>
+    error instanceof UnauthorizedError ? null : Promise.reject(error),
+  );
+  if (!user) redirect("/login");
   const items = NAV.filter((n) => !n.staffOnly || STAFF.includes(user.role));
 
   async function logout() {

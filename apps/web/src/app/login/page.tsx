@@ -35,7 +35,9 @@ export default async function LoginPage({
 
         {params.error && (
           <p role="alert" className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-danger">
-            Email o password non giuste. Riprova.
+            {params.error === "disattivata"
+              ? "La tua utenza è stata disattivata: chiedi alla direzione."
+              : "Email o password non giuste. Riprova."}
           </p>
         )}
         {choices.length > 1 && (

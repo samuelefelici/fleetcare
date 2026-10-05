@@ -6,7 +6,7 @@
  * sta). Chi vede cosa lo decide la RLS: qui non si filtra per associazione.
  */
 import "server-only";
-import { and, asc, desc, eq, isNull, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, ne, or, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import * as schema from "@fleetcare/db";
 import type { TenantTx } from "@fleetcare/db/client";
@@ -23,7 +23,9 @@ const subjectColumns = {
   vehicleCode: schema.vehicles.internalCode,
   vehiclePlate: schema.vehicles.plate,
   vehicleOdometerKm: schema.vehicles.odometerKm,
+  vehicleStatus: schema.vehicles.status,
   equipmentTypeLabel: schema.equipmentTypes.label,
+  equipmentStatus: schema.equipment.status,
   equipmentSerial: schema.equipment.serialNumber,
   equipmentInventory: schema.equipment.inventoryCode,
   hostVehicleId: hostVehicle.id,
@@ -86,11 +88,18 @@ export interface DeadlineFilter {
  * Le scadenze non archiviate (tutte, o quelle di un mezzo / di
  * un'attrezzatura). L'ordine per urgenza lo fa `sortByUrgency`, in
  * memoria: lo stato dipende dall'oggi di Roma e dai km del mezzo.
+ * Lo scadenzario generale lascia fuori i mezzi dismessi e le attrezzature
+ * dismesse, come fanno i loro elenchi; dalla scheda del soggetto si vede
+ * tutto.
  */
 export async function listDeadlines(tx: TenantTx, filter: DeadlineFilter = {}) {
   const conditions: SQL[] = [isNull(v.archivedAt)];
   if (filter.vehicleId) conditions.push(eq(v.vehicleId, filter.vehicleId));
-  if (filter.equipmentId) conditions.push(eq(v.equipmentId, filter.equipmentId));
+  else if (filter.equipmentId) conditions.push(eq(v.equipmentId, filter.equipmentId));
+  else {
+    conditions.push(or(isNull(schema.vehicles.id), ne(schema.vehicles.status, "decommissioned"))!);
+    conditions.push(or(isNull(schema.equipment.id), ne(schema.equipment.status, "disposed"))!);
+  }
   return tx
     .select({ ...viewColumns, ...subjectColumns })
     .from(v)

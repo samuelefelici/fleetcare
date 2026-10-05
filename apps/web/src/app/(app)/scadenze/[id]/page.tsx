@@ -26,6 +26,7 @@ import {
   OUTCOME_LABELS,
   overriddenFields,
   stateText,
+  subjectDismissed,
   subjectHref,
   subjectLabel,
   subjectListHref,
@@ -113,6 +114,11 @@ export default async function DeadlinePage({ params }: { params: Promise<{ id: s
               </>
             )}
             {s.typeReference && ` · ${s.typeReference}`}
+            {subjectDismissed(s) && (
+              <span className="ml-2 align-middle">
+                <Badge tone="neutral">{subjectDismissed(s)}</Badge>
+              </span>
+            )}
           </>
         }
         actions={
