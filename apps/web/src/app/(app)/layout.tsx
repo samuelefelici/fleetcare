@@ -8,6 +8,7 @@ const NAV = [
   { href: "/scadenze", label: "Scadenze", staffOnly: false },
   { href: "/attrezzature", label: "Attrezzature", staffOnly: false },
   { href: "/persone", label: "Persone", staffOnly: true },
+  { href: "/profilo", label: "Il mio profilo", staffOnly: false },
 ] as const;
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -50,10 +51,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             </Link>
           ))}
         </nav>
-        <div className="hidden md:mt-auto md:block md:border-t md:border-zinc-200 md:px-5 md:py-4">
-          <div className="truncate text-sm font-medium">{user.name}</div>
-          <div className="text-xs text-zinc-500">{ROLE_LABELS[user.role]}</div>
-          <form action={logout} className="mt-3">
+        <div className="flex items-center justify-between gap-3 border-t border-zinc-200 px-5 py-3 md:mt-auto md:block md:py-4">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium">{user.name}</div>
+            <div className="text-xs text-zinc-500">{ROLE_LABELS[user.role]}</div>
+          </div>
+          <form action={logout} className="md:mt-3">
             <button type="submit" className="text-sm text-zinc-600 underline hover:text-zinc-900">
               Esci
             </button>
