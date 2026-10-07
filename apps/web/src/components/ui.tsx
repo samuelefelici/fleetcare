@@ -58,20 +58,21 @@ export function buttonClass(variant: ButtonVariant = "primary"): string {
   return buttonVariants[variant === "danger" ? "destructive" : variant];
 }
 
-/** Un link vestito da pulsante. */
+/** Un link vestito da pulsante. Gli altri attributi passano al link (`data-force` in /dev/ui). */
 export function ButtonLink({
   href,
   variant = "primary",
   className,
   children,
-}: {
+  ...props
+}: Omit<ComponentProps<typeof Link>, "href" | "className" | "children"> & {
   href: string;
   variant?: Exclude<ButtonVariant, "destructive" | "danger">;
   className?: string;
   children: ReactNode;
 }) {
   return (
-    <Link href={href} className={cx(buttonClass(variant), className)}>
+    <Link {...props} href={href} className={cx(buttonClass(variant), className)}>
       {children}
     </Link>
   );
@@ -88,7 +89,8 @@ export function ButtonLink({
  * `globals.css` (2 px `--signal`, staccato di 2 px). Un campo con
  * `aria-invalid="true"` ha il bordo rosso. Le differenze di select (freccia
  * disegnata in CSS) e textarea (altezza libera) stanno in `globals.css`,
- * sulla classe `campo`.
+ * sulla classe `campo`, fuori dai layer: altezza, padding e freccia di
+ * select e textarea non si cambiano con una classe in più.
  */
 export const inputClass =
   "campo block h-9 w-full rounded-sm border border-line-strong bg-raised px-3 text-16 text-fg pointer-coarse:h-11 hover:border-fg-secondary disabled:cursor-not-allowed disabled:border-line disabled:bg-surface disabled:text-fg-muted aria-invalid:border-critical";
@@ -440,7 +442,7 @@ export function StatusBadge({
   return (
     <span
       className={cx(
-        "inline-flex min-h-5 items-center gap-1 rounded-sm py-0.5 pr-1.5 pl-1 text-12 font-medium",
+        "inline-flex min-h-5 items-center gap-1 rounded-sm py-0.5 pr-1.5 pl-1 text-12 font-medium whitespace-nowrap",
         statusTones[status],
       )}
     >

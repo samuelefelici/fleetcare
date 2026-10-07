@@ -27,10 +27,6 @@ import { Alert, isDestructive, type ButtonVariant } from "./ui";
 
 type FormAction = (prev: ActionResult | null, formData: FormData) => Promise<ActionResult>;
 
-/** il testo di un pulsante, se è testo: diventa quello del pulsante di conferma */
-const textOf = (node: ReactNode): string | undefined =>
-  typeof node === "string" ? node : undefined;
-
 export function ActionForm({
   action,
   children,
@@ -90,6 +86,9 @@ export function ActionForm({
       }}
       className={className}
     >
+      {/* il dialog chiuso non occupa posto; primo figlio, così non toglie al
+          pulsante il posto di ultimo, che in `space-y` non ha margine sotto */}
+      {dialog}
       {children}
       {state && !state.ok && <Alert tone="critical">{state.error}</Alert>}
       <div className="flex justify-end gap-2">
@@ -97,7 +96,6 @@ export function ActionForm({
           {submitLabel}
         </Button>
       </div>
-      {dialog}
     </form>
   );
 }
@@ -121,11 +119,9 @@ export function ActionButton({
   const router = useRouter();
   const [state, formAction, pending] = useActionState(async () => action(), null);
   const { confirm: ask, dialog } = useConfirm();
-  const question = confirmFor({
-    confirm,
-    destructive: isDestructive(variant),
-    label: textOf(children),
-  });
+  // il testo del pulsante qui può essere uno stato («Dismessa»), non un
+  // verbo: il pulsante del dialog dice «Conferma», se la pagina non dà altro
+  const question = confirmFor({ confirm, destructive: isDestructive(variant), label: undefined });
 
   useEffect(() => {
     if (!state) return;
@@ -149,10 +145,10 @@ export function ActionButton({
         if (await ask(question)) startTransition(() => formAction());
       }}
     >
+      {dialog}
       <Button type="submit" variant={variant} loading={pending}>
         {children}
       </Button>
-      {dialog}
     </form>
   );
 }

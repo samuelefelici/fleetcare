@@ -69,6 +69,7 @@ export function EliminaScadenza({
         if (ok) startTransition(() => formAction(data));
       }}
     >
+      {dialog}
       <p className="text-14 text-fg-secondary">
         {hasHistory
           ? "Ha uno storico: eliminandola viene archiviata, gli adempimenti registrati restano."
@@ -78,7 +79,6 @@ export function EliminaScadenza({
         {label}
       </Button>
       {state && !state.ok && <Alert tone="critical">{state.error}</Alert>}
-      {dialog}
     </form>
   );
 }

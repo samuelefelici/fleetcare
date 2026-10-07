@@ -1,6 +1,6 @@
 /**
  * Il testo di una conferma, separato dal componente perché si possa
- * provare senza DOM (tests/conferma.test.ts).
+ * provare senza DOM (tests/componenti.test.ts).
  */
 
 export type ConfirmOptions = {

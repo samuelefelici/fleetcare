@@ -82,11 +82,9 @@ export default async function DevUiPage({ searchParams }: { searchParams: Promis
 
       <Section id="pulsanti" title="Pulsanti">
         <ButtonStates />
+        <LinkStates />
         <div className="flex flex-wrap items-center gap-3">
           <LoadingDemo />
-          <ButtonLink href="#pulsanti" variant="secondary">
-            Link come pulsante
-          </ButtonLink>
         </div>
         <p className="text-13 text-fg-secondary">
           Un solo primario arancio per vista. Il distruttivo apre sempre un dialog di conferma (vedi
@@ -105,6 +103,9 @@ export default async function DevUiPage({ searchParams }: { searchParams: Promis
               placeholder="FX123AB"
               aria-describedby={describedBy("vero-targa", { hint: true })}
             />
+          </Field>
+          <Field label="Data di immatricolazione" htmlFor="vero-data">
+            <Input id="vero-data" name="data" type="date" defaultValue="2024-03-18" />
           </Field>
           <Field label="Sede" htmlFor="vero-sede">
             <Select id="vero-sede" name="sede" defaultValue="camerano">
@@ -148,10 +149,22 @@ export default async function DevUiPage({ searchParams }: { searchParams: Promis
       <Section id="tabella" title="Tabella dati">
         <p className="text-13 text-fg-secondary">
           Righe di 40 px, numeri a destra in mono. L&apos;ordinamento sta nell&apos;URL: clic su
-          «Sigla» o «Km». Qui la tabella scorre nel suo riquadro, per mostrare l&apos;intestazione
-          che resta in vista.
+          «Sigla» o «Km». Il riquadro scorre in orizzontale quando le colonne non ci stanno e in
+          verticale oltre l&apos;altezza dello schermo, con l&apos;intestazione ferma in cima; da
+          tastiera si raggiunge col Tab e si scorre con le frecce.
         </p>
-        <VehicleTable sp={sp} />
+        <VehicleTable sp={sp} caption="Mezzi dell'associazione" />
+        <h3 className="hud-label pt-2">Riquadro basso (maxHeight 12rem)</h3>
+        <VehicleTable sp={sp} caption="Mezzi dell'associazione, riquadro basso" maxHeight="12rem" />
+        <h3 className="hud-label pt-2">Hover di riga, ordinamento in hover e in focus</h3>
+        <DataTable
+          caption="Stati della tabella"
+          columns={stateColumns}
+          rows={VEHICLES.slice(0, 3)}
+          rowKey={(v) => v.id}
+          rowForce={(v) => (v.code === "AMB-02" ? "hover" : undefined)}
+          maxHeight="none"
+        />
         <h3 className="hud-label pt-2">Senza righe</h3>
         <DataTable
           caption="Mezzi dismessi"
@@ -327,7 +340,7 @@ const SCALE_CLASS: Record<(typeof SCALE)[number], string> = {
 
 function Typography() {
   return (
-    <div className="grid gap-6 md:grid-cols-2">
+    <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
       <ul className="space-y-1">
         {SCALE.map((px) => (
           <li key={px} className="flex items-baseline gap-4">
@@ -388,6 +401,52 @@ function ButtonStates() {
     />
   );
 }
+
+function LinkStates() {
+  return (
+    <StateGrid
+      states={["Predefinito", "Hover", "Focus", "Premuto"]}
+      rows={(
+        [
+          ["Link primario", "primary"],
+          ["Link secondario", "secondary"],
+          ["Link ghost", "ghost"],
+        ] as const
+      ).map(([label, variant]) => ({
+        label,
+        cells: [undefined, "hover", "focus", "hover active"].map((force) => (
+          <ButtonLink key={force ?? "d"} href="#pulsanti" variant={variant} data-force={force}>
+            Nuovo mezzo
+          </ButtonLink>
+        )),
+      }))}
+    />
+  );
+}
+
+/** Le colonne della tabella degli stati: ordinamento forzato in hover («Sigla») e in focus («Km»). */
+const stateColumns: Array<Column<Vehicle>> = [
+  {
+    key: "code",
+    header: "Sigla",
+    mono: true,
+    cell: (v) => v.code,
+    sort: { href: "#tabella", dir: null, force: "hover" },
+  },
+  { key: "plate", header: "Targa", mono: true, cell: (v) => v.plate },
+  {
+    key: "status",
+    header: "Stato",
+    cell: (v) => <StatusBadge status={v.status}>{v.statusLabel}</StatusBadge>,
+  },
+  {
+    key: "km",
+    header: "Km",
+    numeric: true,
+    cell: (v) => v.km.toLocaleString("it-IT"),
+    sort: { href: "#tabella", dir: "desc", force: "focus" },
+  },
+];
 
 const FIELD_STATES = ["Predefinito", "Hover", "Focus", "Disabilitato", "Errore"];
 
@@ -559,7 +618,15 @@ function vehicleColumns(sort: Sort): Array<Column<Vehicle>> {
   ];
 }
 
-function VehicleTable({ sp }: { sp: SearchParams }) {
+function VehicleTable({
+  sp,
+  caption,
+  maxHeight,
+}: {
+  sp: SearchParams;
+  caption: string;
+  maxHeight?: string;
+}) {
   const sort = sortOf(sp);
   const rows = [...VEHICLES].sort((a, b) => {
     const d = sort.key === "km" ? a.km - b.km : a.code.localeCompare(b.code, "it");
@@ -567,11 +634,11 @@ function VehicleTable({ sp }: { sp: SearchParams }) {
   });
   return (
     <DataTable
-      caption="Mezzi dell'associazione"
+      caption={caption}
       columns={vehicleColumns(sort)}
       rows={rows}
       rowKey={(v) => v.id}
-      maxHeight="16rem"
+      maxHeight={maxHeight}
     />
   );
 }

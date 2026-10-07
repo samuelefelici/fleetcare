@@ -7,12 +7,25 @@
  * dialog sopra tutto, rende inerte il resto della pagina (il focus non
  * esce) e lo chiude con Esc. Qui si aggiungono il focus iniziale su
  * «Annulla» (la scelta che non fa danni), il clic sullo sfondo come
- * annulla e il ritorno del focus al pulsante che l'ha aperto.
+ * annulla, il ritorno del focus al pulsante che l'ha aperto e una guardia
+ * contro il doppio clic: il secondo clic (o tocco) di chi ha premuto due
+ * volte il pulsante che apre il dialog cadrebbe sul dialog appena aperto,
+ * magari proprio sulla conferma. Per 400 ms dall'apertura, e per ogni clic
+ * che è il secondo di una serie, il dialog ignora i clic del puntatore; la
+ * tastiera (clic con `detail` 0) passa sempre.
  *
  * Si usa col hook: `const { confirm, dialog } = useConfirm()`, poi
  * `if (await confirm({ title: "…" })) …` e `{dialog}` nel JSX.
  */
-import { useCallback, useEffect, useId, useRef, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type MouseEvent,
+  type RefObject,
+} from "react";
 import { Button } from "./button";
 import type { ConfirmOptions } from "./confirm-text";
 
@@ -34,8 +47,8 @@ export function ConfirmPanel({
   titleId?: string;
   descriptionId?: string;
   cancelRef?: RefObject<HTMLButtonElement | null>;
-  onConfirm?: () => void;
-  onCancel?: () => void;
+  onConfirm?: (e: MouseEvent<HTMLButtonElement>) => void;
+  onCancel?: (e: MouseEvent<HTMLButtonElement>) => void;
 }) {
   return (
     <>
@@ -49,7 +62,8 @@ export function ConfirmPanel({
           </p>
         )}
       </div>
-      <div className="flex flex-col-reverse gap-2 border-t border-line px-5 py-4 sm:flex-row sm:justify-end">
+      {/* al telefono uno sopra l'altro, «Annulla» per primo: stesso ordine a video e col Tab */}
+      <div className="flex flex-col gap-2 border-t border-line px-5 py-4 sm:flex-row sm:justify-end">
         <Button ref={cancelRef} variant="secondary" onClick={onCancel}>
           {cancelLabel}
         </Button>
@@ -74,6 +88,7 @@ export function ConfirmDialog({
   const cancelRef = useRef<HTMLButtonElement>(null);
   const opener = useRef<HTMLElement | null>(null);
   const pressedOnBackdrop = useRef(false);
+  const openedAt = useRef(0);
   const titleId = useId();
   const descriptionId = useId();
 
@@ -84,11 +99,16 @@ export function ConfirmDialog({
       opener.current =
         document.activeElement instanceof HTMLElement ? document.activeElement : null;
       dialog.showModal();
+      openedAt.current = performance.now();
       cancelRef.current?.focus();
     } else if (!open && dialog.open) {
       dialog.close();
     }
   }, [open]);
+
+  /** un clic del puntatore arrivato con il dialog appena aperto, o secondo di una serie */
+  const tooSoon = (e: MouseEvent) =>
+    e.detail !== 0 && (e.detail > 1 || performance.now() - openedAt.current < 400);
 
   return (
     <dialog
@@ -109,8 +129,9 @@ export function ConfirmDialog({
         pressedOnBackdrop.current = e.target === e.currentTarget;
       }}
       onClick={(e) => {
-        if (pressedOnBackdrop.current && e.target === e.currentTarget) onResult(false);
+        const onBackdrop = pressedOnBackdrop.current && e.target === e.currentTarget;
         pressedOnBackdrop.current = false;
+        if (onBackdrop && !tooSoon(e)) onResult(false);
       }}
       className="m-auto w-[min(30rem,calc(100vw-2rem))] rounded-lg border border-line-strong bg-raised p-0 text-fg opacity-100 shadow-2xl transition-[opacity,translate,display,overlay] transition-discrete duration-150 ease-standard backdrop:bg-canvas/80 not-open:translate-y-1 not-open:opacity-0 motion-reduce:transition-none starting:open:translate-y-1 starting:open:opacity-0"
     >
@@ -119,7 +140,9 @@ export function ConfirmDialog({
         titleId={titleId}
         descriptionId={descriptionId}
         cancelRef={cancelRef}
-        onConfirm={() => onResult(true)}
+        onConfirm={(e) => {
+          if (!tooSoon(e)) onResult(true);
+        }}
         onCancel={() => onResult(false)}
       />
     </dialog>
