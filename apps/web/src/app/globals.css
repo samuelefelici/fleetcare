@@ -1,24 +1,15 @@
 @import "tailwindcss";
-
-/* Tailwind v4 si configura qui. I colori di FleetCare: il giallo della
-   Croce Gialla come accento, e i tre colori del semaforo delle scadenze. */
-@theme {
-  --color-brand: #f2c200;
-  --color-brand-ink: #3b2f00;
-  --color-ok: #15803d;
-  --color-warn: #b45309;
-  --color-danger: #b91c1c;
-  --font-sans:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-}
-
-:root {
-  color-scheme: light;
-}
+/* i token (colori, font, scala, utility tipografiche): l'unica fonte */
+@import "./tokens.css";
+/* temporaneo: le classi chiare delle pagine di oggi → token scuri (via nella PR7) */
+@import "./bridge.css";
 
 body {
-  background-color: var(--color-zinc-50);
-  color: var(--color-zinc-900);
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  /* base dell'app 14 px; i campi restano a 16 px (text-base) per non far zoomare iOS */
+  font-size: var(--text-14);
+  line-height: var(--text-14--line-height);
 }
 
 /* i volontari usano il telefono con i guanti: bersagli grandi */

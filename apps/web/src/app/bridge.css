@@ -1,0 +1,57 @@
+/*
+ * PONTE TEMPORANEO, da togliere nella PR7.
+ *
+ * Le pagine di oggi usano la tavolozza di Tailwind pensata per il tema
+ * chiaro (bg-white, text-zinc-500, border-zinc-200, bg-red-50…) e i cinque
+ * token di prima (brand, brand-ink, ok, warn, danger). Qui quei nomi
+ * diventano alias dei token scuri, così l'app è scura e leggibile subito
+ * senza toccare le pagine. Le PR2, PR3 e PR7 sostituiscono le classi con i
+ * token veri; quando non ne resta nessuna, questo file e il suo @import in
+ * globals.css si cancellano.
+ *
+ * `@theme` semplice (non inline): le classi leggono var(--color-zinc-500)
+ * e così sotto si può ancora correggere un alias per un caso particolare.
+ */
+
+@theme {
+  /* neutri: nel tema scuro «più chiaro» vuol dire più in alto */
+  --color-white: var(--bg-raised);
+  --color-zinc-50: var(--bg-hover);
+  --color-zinc-100: var(--bg-hover);
+  --color-zinc-200: var(--border);
+  --color-zinc-300: var(--border-strong);
+  --color-zinc-400: var(--status-idle);
+  --color-zinc-500: var(--text-secondary);
+  --color-zinc-600: var(--text-secondary);
+  --color-zinc-700: var(--text-primary);
+  --color-zinc-800: var(--text-primary);
+  --color-zinc-900: var(--text-primary);
+
+  /* fondi pastello degli avvisi e dei badge, e i loro testi */
+  --color-red-50: var(--status-critical-tint);
+  --color-red-100: var(--status-critical-tint);
+  --color-red-300: var(--status-critical);
+  --color-red-800: var(--status-critical-fg);
+  --color-green-50: var(--status-ok-tint);
+  --color-green-100: var(--status-ok-tint);
+  --color-green-800: var(--status-ok-fg);
+  --color-green-900: var(--status-ok-fg);
+  --color-amber-50: var(--status-warn-tint);
+  --color-amber-100: var(--status-warn-tint);
+  --color-amber-400: var(--accent-hover);
+  --color-amber-800: var(--status-warn-fg);
+
+  /* i token di prima: ok e warn hanno già il nome nuovo (tokens.css) */
+  --color-brand: var(--accent);
+  --color-brand-ink: var(--on-accent);
+  --color-danger: var(--status-critical-fg);
+}
+
+/*
+ * text-brand-ink compare anche sopra bg-brand/20 (badge «brand» e filtro
+ * attivo dello scadenzario): lì il fondo è la tinta scura dell'arancio e il
+ * testo scuro di --on-accent non si leggerebbe.
+ */
+[class*="bg-brand/"] {
+  --color-brand-ink: var(--text-primary);
+}

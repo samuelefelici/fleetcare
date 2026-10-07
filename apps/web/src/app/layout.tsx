@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Toaster } from "sonner";
+import { fontVariables } from "./fonts";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -7,14 +8,15 @@ export const metadata: Metadata = {
   description: "Il parco mezzi dell'associazione: mezzi, attrezzature, scadenze.",
 };
 
-export const viewport: Viewport = { themeColor: "#f2c200" };
+/** themeColor è --bg-base di tokens.css: scripts/check-contrast.ts controlla che coincidano. */
+export const viewport: Viewport = { themeColor: "#0d0e10", colorScheme: "dark" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="it">
+    <html lang="it" className={fontVariables}>
       <body className="min-h-dvh antialiased">
         {children}
-        <Toaster richColors position="top-center" />
+        <Toaster theme="dark" richColors position="top-center" />
       </body>
     </html>
   );
