@@ -4,6 +4,39 @@
 /* temporaneo: le classi chiare delle pagine di oggi → token scuri (via nella PR7) */
 @import "./bridge.css";
 
+/*
+ * Hover, focus e pressione si possono forzare con `data-force="hover"`
+ * (o "focus", "active", anche insieme: `data-force="hover focus"`): è così
+ * che la pagina di verifica /dev/ui mostra ogni stato senza mouse. Le tre
+ * varianti di Tailwind restano quelle di sempre, con questo selettore in più.
+ */
+@custom-variant hover {
+  @media (hover: hover) {
+    &:hover {
+      @slot;
+    }
+  }
+  &[data-force~="hover"] {
+    @slot;
+  }
+}
+@custom-variant focus-visible {
+  &:focus-visible {
+    @slot;
+  }
+  &[data-force~="focus"] {
+    @slot;
+  }
+}
+@custom-variant active {
+  &:active {
+    @slot;
+  }
+  &[data-force~="active"] {
+    @slot;
+  }
+}
+
 body {
   background-color: var(--bg-base);
   color: var(--text-primary);
@@ -12,23 +45,107 @@ body {
   line-height: var(--text-14--line-height);
 }
 
-/*
- * I campi restano a 16 px qualunque sia la base: sotto i 16 px iOS Safari
- * ingrandisce la pagina al tocco. Nel layer base, così una classe di
- * dimensione sul singolo campo vince comunque.
- */
 @layer base {
+  /*
+   * I campi restano a 16 px qualunque sia la base: sotto i 16 px iOS Safari
+   * ingrandisce la pagina al tocco. Nel layer base, così una classe di
+   * dimensione sul singolo campo vince comunque.
+   */
   input,
   select,
   textarea {
     font-size: var(--text-16);
   }
+
+  /*
+   * Il focus da tastiera, uguale per tutto ciò che si può raggiungere:
+   * 2 px di --signal staccati di 2 px dal bordo (3:1 su ogni superficie,
+   * lo controlla scripts/check-contrast.ts). Nel layer base: un componente
+   * che ne vuole uno diverso lo dice con una classe.
+   */
+  :focus-visible,
+  [data-force~="focus"] {
+    outline: 2px solid var(--signal);
+    outline-offset: 2px;
+  }
+
+  /* spunte e scelte: la selezione è blu, l'arancio resta alle azioni */
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--signal);
+  }
 }
 
-/* i volontari usano il telefono con i guanti: bersagli grandi */
-.touch button,
-.touch a,
-.touch input,
-.touch select {
-  min-height: 2.75rem;
+/*
+ * Campi (`inputClass` in components/ui.tsx, classe `campo`). Fuori dai layer,
+ * perché devono vincere sull'altezza fissa delle utility:
+ * - la select perde la freccia del sistema, che sul tema scuro cambia da un
+ *   browser all'altro, e ne ha una disegnata con due gradienti nel colore del
+ *   testo secondario (niente immagini, niente colori fuori dai token);
+ * - la textarea ha l'altezza delle sue righe, almeno 80 px.
+ */
+.campo:is(select) {
+  appearance: none;
+  padding-right: 2.25rem;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-secondary) 50%),
+    linear-gradient(135deg, var(--text-secondary) 50%, transparent 50%);
+  background-position:
+    calc(100% - 1.125rem) 50%,
+    calc(100% - 0.8125rem) 50%;
+  background-size: 0.3125rem 0.3125rem;
+  background-repeat: no-repeat;
+}
+.campo:is(select[multiple], select[size]:not([size="1"])) {
+  background-image: none;
+  padding-right: 0.75rem;
+}
+.campo:is(textarea) {
+  height: auto;
+  min-height: 5rem;
+  padding-block: 0.5rem;
+}
+
+/*
+ * I volontari usano il telefono con i guanti: bersagli grandi al tocco.
+ * Col mouse i controlli restano a 36 px, come chiede la specifica.
+ */
+@media (pointer: coarse) {
+  .touch button,
+  .touch a,
+  .touch input,
+  .touch select {
+    min-height: 2.75rem;
+  }
+}
+
+/*
+ * Toast (sonner): i suoi colori diventano i token. Il toast è grafite come un
+ * popover; lo stato lo dicono l'icona colorata e il testo. Sonner inserisce
+ * il suo CSS nella pagina dopo il nostro, quindi qui serve un selettore più
+ * specifico (`:root` davanti) per vincere.
+ */
+:root [data-sonner-toaster][data-sonner-theme="dark"] {
+  --normal-bg: var(--bg-raised);
+  --normal-bg-hover: var(--bg-hover);
+  --normal-border: var(--border-strong);
+  --normal-border-hover: var(--border-strong);
+  --normal-text: var(--text-primary);
+  --border-radius: 6px;
+  font-family: var(--font-sans);
+}
+:root [data-sonner-toaster][data-sonner-theme="dark"] [data-description] {
+  color: var(--text-secondary);
+}
+:root [data-sonner-toast][data-type="success"] [data-icon] {
+  color: var(--status-ok);
+}
+:root [data-sonner-toast][data-type="error"] [data-icon] {
+  color: var(--status-critical);
+}
+:root [data-sonner-toast][data-type="warning"] [data-icon] {
+  color: var(--status-warn);
+}
+:root [data-sonner-toast][data-type="info"] [data-icon] {
+  color: var(--signal);
 }

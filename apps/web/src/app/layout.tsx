@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Toaster } from "sonner";
+import { IconClose, IconCritical, IconInfo, IconOk, IconWarn } from "@/components/icons";
 import { fontVariables } from "./fonts";
 import "./globals.css";
 
@@ -16,7 +17,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="it" className={fontVariables}>
       <body className="min-h-dvh antialiased">
         {children}
-        <Toaster theme="dark" richColors position="top-center" />
+        {/* i colori dei toast sono i token: vedi la fine di globals.css */}
+        <Toaster
+          theme="dark"
+          position="top-center"
+          closeButton
+          containerAriaLabel="Notifiche"
+          toastOptions={{ closeButtonAriaLabel: "Chiudi la notifica" }}
+          icons={{
+            success: <IconOk />,
+            error: <IconCritical />,
+            warning: <IconWarn />,
+            info: <IconInfo />,
+            close: <IconClose className="size-3" />,
+          }}
+        />
       </body>
     </html>
   );
