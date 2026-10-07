@@ -1,0 +1,203 @@
+/*
+ * I token dell'interfaccia di FleetCare: l'unica fonte di colori, font e
+ * scala tipografica. Un valore si cambia qui e cambia dappertutto; nessun
+ * componente scrive un colore a mano.
+ *
+ * Due livelli:
+ * 1. le variabili CSS in :root, con i nomi del design system (--bg-base,
+ *    --text-primary…). Per un tema chiaro basterà un blocco
+ *    `:root[data-theme="light"] { … }` con gli stessi nomi, senza toccare
+ *    i componenti;
+ * 2. `@theme inline` le espone a Tailwind con nomi brevi, e le classi
+ *    puntano direttamente alle variabili (`bg-canvas` → var(--bg-base)).
+ *
+ * Nome CSS          → classe Tailwind        uso
+ * --bg-base         → bg-canvas              fondo dell'app
+ * --bg-surface      → bg-surface             pannelli, barra laterale, lato del modulo di accesso
+ * --bg-raised       → bg-raised              card, campi, popover
+ * --bg-hover        → bg-hover               hover di righe e voci
+ * --border          → border-line            bordi standard
+ * --border-strong   → border-line-strong     bordi di campi e componenti interattivi
+ * --text-primary    → text-fg                testo principale
+ * --text-secondary  → text-fg-secondary      testo secondario
+ * --text-muted      → text-fg-muted          solo testo disabilitato o decorativo, o testo grande
+ *                                            (≥ 24 px, o ≥ 18,66 px in grassetto: è la soglia WCAG di 3:1)
+ * --accent…         → bg-accent, text-on-accent, bg-accent-hover, bg-accent-pressed, bg-accent-tint
+ * --signal…         → text-signal-fg (link), ring-signal (focus), bg-signal-tint (selezione)
+ * --status-*        → bg-ok (pallino, icona), text-ok-fg (testo), bg-ok-tint (fondo), e così warn, critical, idle
+ *
+ * Regole: il testo sull'arancio è --on-accent, mai bianco; l'arancio non si
+ * usa per gli stati e il giallo non si usa per le azioni; uno stato si dice
+ * con icona + testo + colore. I rapporti di contrasto delle coppie usate li
+ * controlla scripts/check-contrast.ts, che fallisce sotto soglia.
+ *
+ * Valori aggiunti o cambiati rispetto al prompt, perché quelli dati non
+ * passavano le soglie WCAG che lo stesso prompt chiede:
+ * - --border-strong #676B71 invece di #3A3F47 (che fa 1,56:1 su --bg-raised:
+ *   i bordi dei campi devono fare almeno 3:1);
+ * - le varianti di testo degli stati (--status-*-fg) e di --signal-fg, per
+ *   il testo su una riga in hover o sulla tinta del suo stato (4,5:1);
+ *   verde, giallo e arancio restano quelli del prompt, rosso, grigio e blu
+ *   sono schiariti del 6–12% verso --text-primary;
+ * - le tinte (--*-tint): il colore al 14% sopra --bg-raised, per i fondi
+ *   di badge, avvisi e selezione.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* superfici */
+  --bg-base: #0d0e10;
+  --bg-surface: #15171a;
+  --bg-raised: #1c1f23;
+  --bg-hover: #23272c;
+
+  /* bordi */
+  --border: #2a2e34;
+  --border-strong: #676b71;
+
+  /* testo */
+  --text-primary: #ecedef;
+  --text-secondary: #a3a8af;
+  --text-muted: #6e747c;
+
+  /* brand e azione primaria */
+  --accent: #ff6b1a;
+  --accent-hover: #ff8540;
+  --accent-pressed: #e85a0c;
+  --on-accent: #14110f;
+  --accent-tint: #3c2a22;
+
+  /* link, selezione, focus, informazione */
+  --signal: #3b8cff;
+  --signal-hover: #6aa7ff;
+  --signal-fg: #4994fe;
+  --signal-tint: #202e42;
+
+  /* stati: colore pieno (icone, pallini), testo, tinta di fondo */
+  --status-ok: #3dbe7a;
+  --status-ok-fg: #3dbe7a;
+  --status-ok-tint: #21352f;
+  --status-warn: #f2c94c;
+  --status-warn-fg: #f2c94c;
+  --status-warn-tint: #3a3729;
+  --status-critical: #f0524a;
+  --status-critical-fg: #f0655e;
+  --status-critical-tint: #3a2628;
+  --status-idle: #8b919a;
+  --status-idle-fg: #91979f;
+  --status-idle-tint: #2c2f34;
+}
+
+@theme inline {
+  --color-canvas: var(--bg-base);
+  --color-surface: var(--bg-surface);
+  --color-raised: var(--bg-raised);
+  --color-hover: var(--bg-hover);
+
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+
+  --color-fg: var(--text-primary);
+  --color-fg-secondary: var(--text-secondary);
+  --color-fg-muted: var(--text-muted);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-pressed: var(--accent-pressed);
+  --color-on-accent: var(--on-accent);
+  --color-accent-tint: var(--accent-tint);
+
+  --color-signal: var(--signal);
+  --color-signal-hover: var(--signal-hover);
+  --color-signal-fg: var(--signal-fg);
+  --color-signal-tint: var(--signal-tint);
+
+  --color-ok: var(--status-ok);
+  --color-ok-fg: var(--status-ok-fg);
+  --color-ok-tint: var(--status-ok-tint);
+  --color-warn: var(--status-warn);
+  --color-warn-fg: var(--status-warn-fg);
+  --color-warn-tint: var(--status-warn-tint);
+  --color-critical: var(--status-critical);
+  --color-critical-fg: var(--status-critical-fg);
+  --color-critical-tint: var(--status-critical-tint);
+  --color-idle: var(--status-idle);
+  --color-idle-fg: var(--status-idle-fg);
+  --color-idle-tint: var(--status-idle-tint);
+
+  /*
+   * Font: le variabili --font-barlow-condensed, --font-plex-sans e
+   * --font-plex-mono le definisce next/font (src/app/fonts.ts) sull'<html>.
+   * Display e sans hanno un ripiego di sistema tarato sulle metriche del font
+   * vero; il mono ripiega su ui-monospace così com'è, che ha già la stessa
+   * larghezza dei caratteri.
+   */
+  --font-display: var(--font-barlow-condensed), "Arial Narrow", sans-serif;
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SFMono-Regular", monospace;
+
+  /*
+   * Scala tipografica: 11 / 12 / 13 / 14 / 16 / 20 / 24 / 32 / 48 px.
+   * I nomi dicono i pixel (text-13, text-24); i nomi di Tailwind ancora in
+   * uso nelle pagine restano allineati alla scala finché la PR7 non li
+   * sostituisce (text-lg passa da 18 a 16 px, text-3xl da 30 a 32).
+   */
+  --text-11: 0.6875rem;
+  --text-11--line-height: 1rem;
+  --text-12: 0.75rem;
+  --text-12--line-height: 1rem;
+  --text-13: 0.8125rem;
+  --text-13--line-height: 1.125rem;
+  --text-14: 0.875rem;
+  --text-14--line-height: 1.25rem;
+  --text-16: 1rem;
+  --text-16--line-height: 1.5rem;
+  --text-20: 1.25rem;
+  --text-20--line-height: 1.75rem;
+  --text-24: 1.5rem;
+  --text-24--line-height: 2rem;
+  --text-32: 2rem;
+  --text-32--line-height: 2.5rem;
+  --text-48: 3rem;
+  --text-48--line-height: 3.25rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+  --text-3xl: 2rem;
+  --text-3xl--line-height: 2.5rem;
+
+  --tracking-display: 0.04em;
+  --tracking-hud: 0.12em;
+
+  /* movimento nell'app: breve, senza rimbalzi; il cinema resta nella login */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /*
+   * Raggi: Tailwind li ha già uguali alla specifica, rounded-sm 4 px (campi,
+   * badge), rounded-md 6 px (card, pannelli), rounded-lg 8 px (modali).
+   */
+}
+
+/* Numeri in colonna: targhe, km, date, importi. */
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Le etichette dei pannelli e dell'HUD: mono, maiuscolo, 11 px, spaziatura larga. */
+@utility hud-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+  line-height: var(--text-11--line-height);
+  font-weight: 500;
+  letter-spacing: var(--tracking-hud);
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+/* Wordmark, titoli di pagina, titoli HUD, sigla del mezzo: Barlow Condensed 600 maiuscolo. */
+@utility title-display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: var(--tracking-display);
+  text-transform: uppercase;
+}
