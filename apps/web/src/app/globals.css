@@ -7,9 +7,22 @@
 body {
   background-color: var(--bg-base);
   color: var(--text-primary);
-  /* base dell'app 14 px; i campi restano a 16 px (text-base) per non far zoomare iOS */
+  /* base dell'app 14 px */
   font-size: var(--text-14);
   line-height: var(--text-14--line-height);
+}
+
+/*
+ * I campi restano a 16 px qualunque sia la base: sotto i 16 px iOS Safari
+ * ingrandisce la pagina al tocco. Nel layer base, così una classe di
+ * dimensione sul singolo campo vince comunque.
+ */
+@layer base {
+  input,
+  select,
+  textarea {
+    font-size: var(--text-16);
+  }
 }
 
 /* i volontari usano il telefono con i guanti: bersagli grandi */

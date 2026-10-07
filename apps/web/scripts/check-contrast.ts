@@ -51,7 +51,12 @@ const pairs: Pair[] = [
   ...surfaces.flatMap((bg) => [
     { fg: "text-primary", bg, min: TEXT, use: "testo principale" },
     { fg: "text-secondary", bg, min: TEXT, use: "testo secondario" },
-    { fg: "text-muted", bg, min: LARGE, use: "testo non essenziale o ≥ 18 px" },
+    {
+      fg: "text-muted",
+      bg,
+      min: LARGE,
+      use: "solo testo disabilitato o decorativo, o grande: ≥ 24 px o ≥ 18,66 px in grassetto",
+    },
     { fg: "signal-fg", bg, min: TEXT, use: "link" },
     ...statuses.map((s) => ({ fg: `status-${s}-fg`, bg, min: TEXT, use: `testo di stato ${s}` })),
   ]),

@@ -20,7 +20,8 @@
  * --border-strong   → border-line-strong     bordi di campi e componenti interattivi
  * --text-primary    → text-fg                testo principale
  * --text-secondary  → text-fg-secondary      testo secondario
- * --text-muted      → text-fg-muted          solo testo non essenziale o ≥ 18 px
+ * --text-muted      → text-fg-muted          solo testo disabilitato o decorativo, o testo grande
+ *                                            (≥ 24 px, o ≥ 18,66 px in grassetto: è la soglia WCAG di 3:1)
  * --accent…         → bg-accent, text-on-accent, bg-accent-hover, bg-accent-pressed, bg-accent-tint
  * --signal…         → text-signal-fg (link), ring-signal (focus), bg-signal-tint (selezione)
  * --status-*        → bg-ok (pallino, icona), text-ok-fg (testo), bg-ok-tint (fondo), e così warn, critical, idle
@@ -127,8 +128,10 @@
 
   /*
    * Font: le variabili --font-barlow-condensed, --font-plex-sans e
-   * --font-plex-mono le definisce next/font (src/app/fonts.ts) sull'<html>,
-   * con un ripiego di sistema già tarato sulle metriche del font vero.
+   * --font-plex-mono le definisce next/font (src/app/fonts.ts) sull'<html>.
+   * Display e sans hanno un ripiego di sistema tarato sulle metriche del font
+   * vero; il mono ripiega su ui-monospace così com'è, che ha già la stessa
+   * larghezza dei caratteri.
    */
   --font-display: var(--font-barlow-condensed), "Arial Narrow", sans-serif;
   --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
