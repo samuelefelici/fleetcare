@@ -13,9 +13,8 @@
 import localFont from "next/font/local";
 
 /**
- * Barlow Condensed 600: wordmark, titoli di pagina, HUD. Non precaricato
- * finché nessuna pagina lo usa: si rimette `preload` quando la login mostra
- * il wordmark (PR4).
+ * Barlow Condensed 600: wordmark, titoli di pagina, HUD. Precaricato: il
+ * wordmark della shell è in cima a ogni pagina dell'app.
  */
 export const fontDisplay = localFont({
   src: "../../node_modules/@fontsource/barlow-condensed/files/barlow-condensed-latin-600-normal.woff2",
@@ -23,7 +22,6 @@ export const fontDisplay = localFont({
   style: "normal",
   variable: "--font-barlow-condensed",
   display: "swap",
-  preload: false,
 });
 
 /** IBM Plex Sans 400/500/600: tutta l'interfaccia. */

@@ -101,6 +101,9 @@ const SOLO_TOKEN = [
   "src/app/dev/ui/page.tsx",
   "src/app/dev/ui/demo.tsx",
   "src/app/(app)/scadenze/[id]/elimina.tsx",
+  "src/app/(app)/layout.tsx",
+  "src/components/shell.tsx",
+  "src/components/shell-client.tsx",
 ];
 
 const PALETTE =
