@@ -4,6 +4,29 @@
 /* temporaneo: le classi chiare delle pagine di oggi → token scuri (via nella PR7) */
 @import "./bridge.css";
 
+/*
+ * Hover, focus e pressione si possono forzare con `data-force="hover"`
+ * (o "focus", "active", anche insieme: `data-force="hover focus"`): è così
+ * che la pagina di verifica /dev/ui mostra ogni stato senza mouse. Le tre
+ * varianti di Tailwind restano quelle di sempre, con questo selettore in più.
+ * focus-visible e active sono un selettore solo (`:is()`), così si
+ * compongono anche con `not-`; hover deve restare dentro `@media (hover:
+ * hover)` e quindi `not-hover:` non esiste: si scrive lo stato normale e
+ * l'hover sopra.
+ */
+@custom-variant hover {
+  @media (hover: hover) {
+    &:hover {
+      @slot;
+    }
+  }
+  &[data-force~="hover"] {
+    @slot;
+  }
+}
+@custom-variant focus-visible (&:is(:focus-visible, [data-force~="focus"]));
+@custom-variant active (&:is(:active, [data-force~="active"]));
+
 body {
   background-color: var(--bg-base);
   color: var(--text-primary);
@@ -12,23 +35,202 @@ body {
   line-height: var(--text-14--line-height);
 }
 
-/*
- * I campi restano a 16 px qualunque sia la base: sotto i 16 px iOS Safari
- * ingrandisce la pagina al tocco. Nel layer base, così una classe di
- * dimensione sul singolo campo vince comunque.
- */
 @layer base {
+  /*
+   * I campi restano a 16 px qualunque sia la base: sotto i 16 px iOS Safari
+   * ingrandisce la pagina al tocco. Nel layer base, così una classe di
+   * dimensione sul singolo campo vince comunque.
+   */
   input,
   select,
   textarea {
     font-size: var(--text-16);
   }
+
+  /*
+   * Il focus da tastiera, uguale per tutto ciò che si può raggiungere:
+   * 2 px di --signal staccati di 2 px dal bordo (3:1 su ogni superficie,
+   * lo controlla scripts/check-contrast.ts). Nel layer base: un componente
+   * che ne vuole uno diverso lo dice con una classe.
+   */
+  :focus-visible,
+  [data-force~="focus"] {
+    outline: 2px solid var(--signal);
+    outline-offset: 2px;
+  }
+
+  /*
+   * Nei campi data il pulsante del calendario è nello shadow DOM: quando ha
+   * il focus il campo non è né :focus né :focus-visible, solo :focus-within.
+   */
+  .campo:is(
+      [type="date"],
+      [type="datetime-local"],
+      [type="time"],
+      [type="month"],
+      [type="week"]
+    ):focus-within {
+    outline: 2px solid var(--signal);
+    outline-offset: 2px;
+  }
+
+  /* spunte e scelte: la selezione è blu, l'arancio resta alle azioni */
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--signal);
+  }
 }
 
-/* i volontari usano il telefono con i guanti: bersagli grandi */
-.touch button,
-.touch a,
-.touch input,
-.touch select {
-  min-height: 2.75rem;
+/*
+ * Campi (`inputClass` in components/ui.tsx, classe `campo`). Fuori dai layer,
+ * perché devono vincere sull'altezza fissa delle utility; per questo una
+ * classe passata a Select o Textarea non cambia queste proprietà:
+ * - la select perde la freccia del sistema, che sul tema scuro cambia da un
+ *   browser all'altro, e ne ha una disegnata con due gradienti nel colore del
+ *   testo secondario (tenue se disabilitata; niente immagini né colori fuori
+ *   dai token). Con i colori forzati di Windows i gradienti spariscono, quindi
+ *   lì torna la freccia del sistema;
+ * - una select a più righe (multiple, size) ha l'altezza delle sue righe;
+ * - la textarea ha l'altezza delle sue righe, almeno 80 px.
+ */
+.campo:is(select) {
+  --campo-freccia: var(--text-secondary);
+  appearance: none;
+  padding-right: 2.25rem;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--campo-freccia) 50%),
+    linear-gradient(135deg, var(--campo-freccia) 50%, transparent 50%);
+  background-position:
+    calc(100% - 1.125rem) 50%,
+    calc(100% - 0.8125rem) 50%;
+  background-size: 0.3125rem 0.3125rem;
+  background-repeat: no-repeat;
+}
+.campo:is(select):disabled {
+  --campo-freccia: var(--text-muted);
+}
+.campo:is(select[multiple], select[size]:not([size="1"])) {
+  height: auto;
+  background-image: none;
+  padding-right: 0.75rem;
+}
+@media (forced-colors: active) {
+  .campo:is(select) {
+    appearance: auto;
+    background-image: none;
+    padding-right: 0.75rem;
+  }
+}
+.campo:is(textarea) {
+  height: auto;
+  min-height: 5rem;
+  padding-block: 0.5rem;
+}
+
+/*
+ * I volontari usano il telefono con i guanti: bersagli grandi al tocco.
+ * Col mouse i controlli restano a 36 px, come chiede la specifica.
+ */
+@media (pointer: coarse) {
+  .touch button,
+  .touch a,
+  .touch input,
+  .touch select {
+    min-height: 2.75rem;
+  }
+}
+
+/*
+ * Toast (sonner): i suoi colori diventano i token. Il toast è grafite come un
+ * popover; lo stato lo dicono l'icona colorata e il testo. Sonner inserisce
+ * il suo CSS nella pagina dopo il nostro e fuori dai layer, quindi qui serve
+ * un selettore più specifico (`:root` davanti, e `[data-styled]` dove lo usa
+ * lui) per vincere.
+ */
+:root [data-sonner-toaster][data-sonner-theme="dark"] {
+  --normal-bg: var(--bg-raised);
+  --normal-bg-hover: var(--bg-hover);
+  --normal-border: var(--border-strong);
+  --normal-border-hover: var(--border-strong);
+  --normal-text: var(--text-primary);
+  --border-radius: 6px;
+  font-family: var(--font-sans);
+}
+:root [data-sonner-toaster][data-sonner-theme="dark"] [data-description] {
+  color: var(--text-secondary);
+}
+:root [data-sonner-toast][data-type="success"] [data-icon] {
+  color: var(--status-ok);
+}
+:root [data-sonner-toast][data-type="error"] [data-icon] {
+  color: var(--status-critical);
+}
+:root [data-sonner-toast][data-type="warning"] [data-icon] {
+  color: var(--status-warn);
+}
+:root [data-sonner-toast][data-type="info"] [data-icon] {
+  color: var(--signal);
+}
+
+/* il focus da tastiera sul toast: sonner gli toglie l'outline */
+:root [data-sonner-toaster]:focus-visible,
+:root [data-sonner-toast]:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+
+/*
+ * Movimento: 160 ms con la curva dell'app, solo posizione e opacità (sonner
+ * anima anche l'altezza in 400 ms). Con prefers-reduced-motion sonner toglie
+ * tutto da sé.
+ */
+:root [data-sonner-toaster],
+:root [data-sonner-toast] {
+  transition-duration: 160ms;
+  transition-timing-function: --theme(--ease-standard);
+}
+:root [data-sonner-toast] {
+  transition-property: transform, opacity;
+}
+:root [data-sonner-toast] > * {
+  transition: opacity 160ms --theme(--ease-standard);
+}
+
+/*
+ * La × dentro il toast, a destra, quadrata col raggio dei controlli (sonner la
+ * mette tonda a cavallo dell'angolo). 24 px disegnati; al tocco l'area si
+ * allarga a 44 px senza coprire l'icona del toast, che sta a sinistra.
+ */
+:root [data-sonner-toaster][data-sonner-theme="dark"] [data-sonner-toast][data-styled="true"] {
+  padding-inline-end: 2.75rem;
+}
+:root
+  [data-sonner-toaster][data-sonner-theme="dark"]
+  [data-sonner-toast][data-styled="true"]
+  [data-close-button] {
+  left: auto;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  transition: opacity 160ms --theme(--ease-standard);
+}
+:root
+  [data-sonner-toaster][data-sonner-theme="dark"]
+  [data-sonner-toast][data-styled="true"]
+  [data-close-button]:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+@media (pointer: coarse) {
+  :root [data-sonner-toast][data-styled="true"] [data-close-button]::after {
+    content: "";
+    position: absolute;
+    inset: -0.625rem;
+  }
 }

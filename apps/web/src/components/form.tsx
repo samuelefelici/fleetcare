@@ -11,13 +11,19 @@
  * modulo di venti campi da riscrivere per una targa sbagliata non va bene.
  * Così i campi restano com'erano finché l'azione non riesce; al successo
  * senza navigazione il modulo si svuota da solo. Senza JavaScript vale
- * ancora `action`.
+ * ancora `action` (senza conferma, come prima con `window.confirm`).
+ *
+ * La conferma è un dialog (`confirm-dialog.tsx`): si chiede con `confirm`,
+ * e un pulsante distruttivo la chiede sempre, anche senza testo.
  */
 import { useRouter } from "next/navigation";
 import { startTransition, useActionState, useEffect, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
 import type { ActionResult } from "@/server/actions";
-import { buttonClass, type ButtonVariant } from "./ui";
+import { Button } from "./button";
+import { useConfirm } from "./confirm-dialog";
+import { confirmFor, type ConfirmOptions } from "./confirm-text";
+import { Alert, isDestructive, type ButtonVariant } from "./ui";
 
 type FormAction = (prev: ActionResult | null, formData: FormData) => Promise<ActionResult>;
 
@@ -38,13 +44,22 @@ export function ActionForm({
   successMessage?: string | null;
   /** dove andare dopo il successo; `(id) => url` se l'azione restituisce un id */
   redirectTo?: string | ((id: string | undefined) => string);
-  /** una domanda prima di inviare, per le azioni che pesano (dismettere un mezzo) */
-  confirm?: string;
+  /**
+   * una domanda prima di inviare, per le azioni che pesano (dismettere un
+   * mezzo): «Domanda? Spiegazione.» oppure le opzioni del dialog
+   */
+  confirm?: string | ConfirmOptions;
   className?: string;
 }) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [state, formAction, pending] = useActionState(action, null);
+  const { confirm: ask, dialog } = useConfirm();
+  const question = confirmFor({
+    confirm,
+    destructive: isDestructive(submitVariant),
+    label: submitLabel,
+  });
 
   useEffect(() => {
     if (!state?.ok) return;
@@ -61,24 +76,25 @@ export function ActionForm({
     <form
       ref={formRef}
       action={formAction}
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
-        if (confirm && !window.confirm(confirm)) return;
+        if (pending) return;
+        // i dati si leggono subito: durante il dialog il modulo resta com'è
         const data = new FormData(e.currentTarget);
+        if (question && !(await ask(question))) return;
         startTransition(() => formAction(data));
       }}
       className={className}
     >
+      {/* il dialog chiuso non occupa posto; primo figlio, così non toglie al
+          pulsante il posto di ultimo, che in `space-y` non ha margine sotto */}
+      {dialog}
       {children}
-      {state && !state.ok && (
-        <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-danger">
-          {state.error}
-        </p>
-      )}
+      {state && !state.ok && <Alert tone="critical">{state.error}</Alert>}
       <div className="flex justify-end gap-2">
-        <button type="submit" disabled={pending} className={buttonClass(submitVariant)}>
-          {pending ? "Un momento…" : submitLabel}
-        </button>
+        <Button type="submit" variant={submitVariant} loading={pending}>
+          {submitLabel}
+        </Button>
       </div>
     </form>
   );
@@ -94,7 +110,7 @@ export function ActionButton({
   redirectTo,
 }: {
   action: () => Promise<ActionResult>;
-  confirm?: string;
+  confirm?: string | ConfirmOptions;
   children: ReactNode;
   variant?: ButtonVariant;
   successMessage?: string | null;
@@ -102,6 +118,10 @@ export function ActionButton({
 }) {
   const router = useRouter();
   const [state, formAction, pending] = useActionState(async () => action(), null);
+  const { confirm: ask, dialog } = useConfirm();
+  // il testo del pulsante qui può essere uno stato («Dismessa»), non un
+  // verbo: il pulsante del dialog dice «Conferma», se la pagina non dà altro
+  const question = confirmFor({ confirm, destructive: isDestructive(variant), label: undefined });
 
   useEffect(() => {
     if (!state) return;
@@ -110,20 +130,25 @@ export function ActionButton({
       if (redirectTo) router.push(redirectTo);
       else router.refresh();
     } else {
-      toast.error(state.error);
+      // un errore resta di più: va letto
+      toast.error(state.error, { duration: 8000 });
     }
   }, [state, successMessage, redirectTo, router]);
 
   return (
     <form
       action={formAction}
-      onSubmit={(e) => {
-        if (confirm && !window.confirm(confirm)) e.preventDefault();
+      onSubmit={async (e) => {
+        if (!question) return;
+        e.preventDefault();
+        if (pending) return;
+        if (await ask(question)) startTransition(() => formAction());
       }}
     >
-      <button type="submit" disabled={pending} className={buttonClass(variant)}>
+      {dialog}
+      <Button type="submit" variant={variant} loading={pending}>
         {children}
-      </button>
+      </Button>
     </form>
   );
 }

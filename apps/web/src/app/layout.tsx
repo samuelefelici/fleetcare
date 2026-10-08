@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Toaster } from "sonner";
+import { IconClose, IconCritical, IconInfo, IconOk, IconWarn, Spinner } from "@/components/icons";
 import { fontVariables } from "./fonts";
 import "./globals.css";
 
@@ -16,7 +17,27 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="it" className={fontVariables}>
       <body className="min-h-dvh antialiased">
         {children}
-        <Toaster theme="dark" richColors position="top-center" />
+        {/*
+         * I colori dei toast sono i token: vedi la fine di globals.css.
+         * `expand`: i toast restano aperti uno sotto l'altro, così ogni
+         * fermata del Tab cade su un toast che si vede.
+         */}
+        <Toaster
+          theme="dark"
+          position="top-center"
+          expand
+          closeButton
+          containerAriaLabel="Notifiche"
+          toastOptions={{ closeButtonAriaLabel: "Chiudi la notifica" }}
+          icons={{
+            success: <IconOk />,
+            error: <IconCritical />,
+            warning: <IconWarn />,
+            info: <IconInfo />,
+            loading: <Spinner className="size-4 text-fg-secondary" />,
+            close: <IconClose className="size-3.5" />,
+          }}
+        />
       </body>
     </html>
   );
