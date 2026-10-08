@@ -3,7 +3,13 @@
  * cookie, le iniziali del menu utente.
  */
 import { describe, expect, it } from "vitest";
-import { initials, isActive, parseSidebar, sidebarCookie } from "@/components/shell-logic";
+import {
+  ariaCurrent,
+  initials,
+  isActive,
+  parseSidebar,
+  sidebarCookie,
+} from "@/components/shell-logic";
 
 describe("isActive", () => {
   it("la voce è attiva sulla sua pagina e su quelle sotto", () => {
@@ -41,5 +47,13 @@ describe("initials", () => {
     expect(initials("Anna Maria de Angelis")).toBe("AA");
     expect(initials("direzione")).toBe("D");
     expect(initials("  ")).toBe("?");
+  });
+});
+
+describe("ariaCurrent", () => {
+  it("«page» sulla pagina della voce, «true» sotto, niente altrove", () => {
+    expect(ariaCurrent("/mezzi", "/mezzi")).toBe("page");
+    expect(ariaCurrent("/mezzi/nuovo", "/mezzi")).toBe("true");
+    expect(ariaCurrent("/scadenze", "/mezzi")).toBeUndefined();
   });
 });

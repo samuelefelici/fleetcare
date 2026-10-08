@@ -18,6 +18,15 @@ export function isActive(pathname: string, href: string): boolean {
 }
 
 /**
+ * `aria-current` di una voce: "page" sulla sua pagina, "true" su una pagina
+ * sotto (la scheda di un mezzo è dentro «Mezzi», ma non è la pagina «Mezzi»).
+ */
+export function ariaCurrent(pathname: string, href: string): "page" | "true" | undefined {
+  if (pathname === href) return "page";
+  return isActive(pathname, href) ? "true" : undefined;
+}
+
+/**
  * Lo stato della barra laterale sta in un cookie, che il layout legge sul
  * server: così la pagina arriva già con la barra giusta e niente si sposta
  * dopo l'idratazione (con localStorage la barra si aprirebbe e poi si
