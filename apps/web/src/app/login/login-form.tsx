@@ -4,7 +4,9 @@
  * Il modulo di accesso. I campi, i nomi e l'azione sono quelli di sempre
  * (`loginAction`): il modulo funziona anche prima che arrivi il JavaScript,
  * con i controlli del browser. Con il JavaScript in più:
- * - i messaggi dei campi non validi stanno sotto il campo, in italiano;
+ * - i messaggi dei campi non validi stanno sotto il campo, in italiano, e
+ *   il lettore di schermo li legge (spostando il focus sul campo, o con una
+ *   regione live se il focus è già lì);
  * - il pulsante per mostrare o nascondere la password (senza JavaScript non
  *   comparirebbe a fare niente: c'è solo dopo l'idratazione, dentro il campo,
  *   senza spostare niente);
@@ -19,6 +21,12 @@ import type { TenantChoice } from "./choices";
 import { fieldMessage, type LoginField } from "./validazione";
 
 type Errors = Partial<Record<LoginField, string>>;
+
+const LABELS: Record<LoginField, string> = {
+  email: "Email",
+  password: "Password",
+  tenant: "Associazione",
+};
 
 function SubmitButton() {
   const { pending } = useFormStatus();
@@ -44,17 +52,31 @@ export function LoginForm({
   const [errors, setErrors] = useState<Errors>({});
   const [showPassword, setShowPassword] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [announcement, setAnnouncement] = useState("");
   const focusScheduled = useRef(false);
-  useEffect(() => setMounted(true), []);
+  const announceTimer = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    setMounted(true);
+    return () => window.clearTimeout(announceTimer.current);
+  }, []);
 
   const fieldOf = (el: EventTarget): LoginField | null => {
     const name = (el as HTMLInputElement).name;
     return name === "email" || name === "password" || name === "tenant" ? name : null;
   };
 
+  // il messaggio va detto anche a voce: svuotare la regione e riscriverla
+  // poco dopo, così il lettore di schermo lo ripete anche se è lo stesso
+  function announce(text: string) {
+    window.clearTimeout(announceTimer.current);
+    setAnnouncement("");
+    announceTimer.current = window.setTimeout(() => setAnnouncement(text), 100);
+  }
+
   // il browser segnala un campo non valido: il messaggio va sotto il campo,
   // al posto del fumetto, e il primo campo da correggere prende il focus
-  // (col fumetto lo farebbe il browser)
+  // (col fumetto lo farebbe il browser). Se il focus è già lì (Invio nel
+  // campo sbagliato) spostarlo non fa leggere niente: lo dice la regione live.
   function onInvalid(e: FormEvent<HTMLFormElement>) {
     const target = e.target as HTMLInputElement | HTMLSelectElement;
     const field = fieldOf(target);
@@ -67,23 +89,50 @@ export function LoginForm({
       const form = e.currentTarget;
       queueMicrotask(() => {
         focusScheduled.current = false;
-        form.querySelector<HTMLElement>(":invalid")?.focus();
+        const first = form.querySelector<HTMLInputElement | HTMLSelectElement>(":invalid");
+        if (!first) return;
+        if (document.activeElement !== first) {
+          first.focus();
+          return;
+        }
+        const f = fieldOf(first);
+        const text = f && fieldMessage(f, first.validity);
+        if (f && text) announce(`${LABELS[f]}: ${text}`);
       });
     }
   }
 
-  // mentre si corregge, il messaggio sparisce appena il campo torna valido
-  function onInput(e: FormEvent<HTMLFormElement>) {
+  // mentre si corregge, il messaggio sparisce appena non è più quello giusto
+  // (il campo è valido, o «Scrivi l'email.» quando qualcosa c'è scritto); il
+  // messaggio nuovo, se serve, arriva al prossimo invio, non mentre si scrive.
+  // È onChange: in React ascolta sia `input` sia `change`, che è l'unico
+  // evento di certi gestori di password quando riempiono i campi.
+  function onChange(e: FormEvent<HTMLFormElement>) {
     const target = e.target as HTMLInputElement | HTMLSelectElement;
     const field = fieldOf(target);
     if (!field || !errors[field]) return;
-    if (target.validity.valid) setErrors((prev) => ({ ...prev, [field]: undefined }));
+    if (fieldMessage(field, target.validity) !== errors[field]) {
+      setErrors((prev) => ({ ...prev, [field]: undefined }));
+      window.clearTimeout(announceTimer.current);
+      setAnnouncement("");
+    }
   }
 
   const multi = choices.length > 1;
 
   return (
-    <form action={action} onInvalidCapture={onInvalid} onInput={onInput} className="space-y-5">
+    <form
+      action={action}
+      onInvalidCapture={onInvalid}
+      onChange={onChange}
+      // la password parte come password anche se era mostrata: i gestori di
+      // password riconoscono il campo dal tipo. Il FormData non cambia.
+      onSubmit={() => setShowPassword(false)}
+      className="space-y-5"
+    >
+      <p aria-live="assertive" className="sr-only">
+        {announcement}
+      </p>
       {multi && (
         <Alert tone="info">
           Sei in più di un&apos;associazione: scegli quale, e rimetti la password.

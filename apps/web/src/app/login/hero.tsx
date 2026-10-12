@@ -7,7 +7,10 @@
  *
  * È decorativa: `aria-hidden`, niente di focusabile, `pointer-events: none`.
  * Il segnaposto è in 4:5 come gli asset (viewBox 1000×1250) e riempie il
- * riquadro come `object-fit: cover`.
+ * riquadro come `object-fit: cover`: del disegno si vede sempre la fascia
+ * centrale, che a 2560×1080 è alta circa da y 360 a y 890. Per questo
+ * wireframe e scritte stanno tra 400 e 840. Sotto i 1024 px la banda è
+ * troppo bassa per le scritte e resta solo il wireframe.
  */
 import type { CSSProperties } from "react";
 
@@ -42,14 +45,14 @@ export function ScenePlaceholder({
       <rect width="1000" height="1250" fill={`url(#${id})`} />
       {/* il wireframe: il riquadro dove andrà l'ambulanza, con le diagonali */}
       <g className="fill-none stroke-line-strong" strokeWidth={2} strokeDasharray="10 8">
-        <rect x="140" y="420" width="720" height="440" rx="6" />
-        <path d="M140 420 860 860M860 420 140 860" />
+        <rect x="140" y="400" width="720" height="340" rx="6" />
+        <path d="M140 400 860 740M860 400 140 740" />
       </g>
-      <g className="fill-fg-secondary font-sans" textAnchor="middle">
-        <text x="500" y="935" fontSize="30">
+      <g className="fill-fg-secondary font-sans max-lg:hidden" textAnchor="middle">
+        <text x="500" y="795" fontSize="30">
           {file}
         </text>
-        <text x="500" y="980" fontSize="22" className="fill-fg-muted" letterSpacing="3">
+        <text x="500" y="835" fontSize="22" className="fill-fg-muted" letterSpacing="3">
           {label}
         </text>
       </g>

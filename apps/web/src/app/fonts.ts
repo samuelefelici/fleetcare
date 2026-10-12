@@ -15,10 +15,14 @@ import localFont from "next/font/local";
 /**
  * Barlow Condensed 600: wordmark, titoli di pagina, HUD. Precaricato: il
  * wordmark della shell è in cima a ogni pagina dell'app. `optional` e non
- * `swap`: il wordmark è l'elemento più grande della login (il suo LCP); se il
- * font non è pronto al primo disegno, per quella visita resta il ripiego,
- * tarato sulle stesse misure, e la pagina non si ridisegna quando arriva.
- * Dalla visita dopo il font è in cache e c'è dal primo disegno.
+ * `swap`: sul telefono il wordmark è l'elemento più grande della login,
+ * quindi il suo LCP. Se il font non è pronto al primo disegno, il browser
+ * tiene il ripiego e non ridisegna quando arriva: niente salto né LCP
+ * spostato, ma il ripiego può restare anche nelle pagine dopo, finché non si
+ * ricarica. Dalla visita dopo il font è in cache e c'è dal primo disegno. Il
+ * ripiego che calcola next/font è Arial tarato sulle misure di Barlow; dove
+ * Arial non c'è (Android) valgono i ripieghi stretti di --font-display in
+ * tokens.css.
  */
 export const fontDisplay = localFont({
   src: "../../node_modules/@fontsource/barlow-condensed/files/barlow-condensed-latin-600-normal.woff2",

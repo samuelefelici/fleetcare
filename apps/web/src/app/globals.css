@@ -139,9 +139,9 @@ html:has(#contenuto) {
 
 /*
  * Il lato del modulo nella login: una griglia tecnica a passo 24 px, linee
- * nel colore del testo al 3%, disegnata su un livello sotto il contenuto che
- * sfuma negli ultimi 96 px a destra: la colonna non finisce su una linea
- * netta, ma si scioglie nella sfumatura della hero.
+ * nel colore del testo al 3%, disegnata su un livello sotto il contenuto. Da
+ * 1024 px, dove la hero sta a destra, sfuma negli ultimi 96 px: la colonna non
+ * finisce su una linea netta, ma si scioglie nella sfumatura della hero.
  */
 @utility griglia-tecnica {
   position: relative;
@@ -164,7 +164,9 @@ html:has(#contenuto) {
         transparent 1px
       );
     background-size: 24px 24px;
-    mask-image: linear-gradient(to right, black calc(100% - 6rem), transparent);
+    @media (width >= 64rem) {
+      mask-image: linear-gradient(to right, black calc(100% - 6rem), transparent);
+    }
   }
 }
 

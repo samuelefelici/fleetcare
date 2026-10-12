@@ -32,17 +32,19 @@ export default async function LoginPage({
   const choices = decodeChoices(params.scegli);
 
   return (
-    <main className="touch grid min-h-dvh lg:grid-cols-[clamp(400px,34vw,520px)_minmax(0,1fr)]">
-      <section className="griglia-tecnica z-10 flex min-h-[72dvh] flex-col bg-surface px-6 pt-8 pb-6 sm:px-10 lg:min-h-dvh lg:pt-10">
-        <div className="flex items-center gap-3">
+    <main className="touch grid min-h-dvh grid-cols-1 lg:grid-cols-[clamp(400px,34vw,520px)_minmax(0,1fr)]">
+      <section className="griglia-tecnica z-10 flex min-h-[calc(100dvh_-_28vh)] flex-col bg-surface px-6 pt-8 pb-6 sm:px-10 lg:min-h-dvh lg:pt-10">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <span
             aria-hidden="true"
             className="flex size-10 shrink-0 items-center justify-center rounded-sm bg-accent text-on-accent"
           >
             <IconCross className="size-5" />
           </span>
-          <div className="min-w-0">
-            <p className="title-display text-32 leading-none">FleetCare</p>
+          {/* il testo va a capo sotto il marchio solo se non ci stanno 10rem
+              accanto (testo ingrandito): a 320 px normali resta di fianco */}
+          <div className="min-w-0 grow basis-40">
+            <p className="title-display text-32 leading-none wrap-anywhere">FleetCare</p>
             <p className="mt-1 text-13 text-fg-secondary">
               Gestione parco mezzi per l&apos;emergenza sanitaria
             </p>
