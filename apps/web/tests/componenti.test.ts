@@ -104,6 +104,9 @@ const SOLO_TOKEN = [
   "src/app/(app)/layout.tsx",
   "src/components/shell.tsx",
   "src/components/shell-client.tsx",
+  "src/app/login/page.tsx",
+  "src/app/login/login-form.tsx",
+  "src/app/login/hero.tsx",
 ];
 
 const PALETTE =

@@ -14,14 +14,18 @@ import localFont from "next/font/local";
 
 /**
  * Barlow Condensed 600: wordmark, titoli di pagina, HUD. Precaricato: il
- * wordmark della shell è in cima a ogni pagina dell'app.
+ * wordmark della shell è in cima a ogni pagina dell'app. `optional` e non
+ * `swap`: il wordmark è l'elemento più grande della login (il suo LCP); se il
+ * font non è pronto al primo disegno, per quella visita resta il ripiego,
+ * tarato sulle stesse misure, e la pagina non si ridisegna quando arriva.
+ * Dalla visita dopo il font è in cache e c'è dal primo disegno.
  */
 export const fontDisplay = localFont({
   src: "../../node_modules/@fontsource/barlow-condensed/files/barlow-condensed-latin-600-normal.woff2",
   weight: "600",
   style: "normal",
   variable: "--font-barlow-condensed",
-  display: "swap",
+  display: "optional",
 });
 
 /** IBM Plex Sans 400/500/600: tutta l'interfaccia. */

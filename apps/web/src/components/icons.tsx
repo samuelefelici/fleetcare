@@ -195,6 +195,26 @@ export function IconLogout(props: IconProps) {
   );
 }
 
+/** Mostra la password: un occhio aperto. */
+export function IconEye(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M1.5 8s2.4-4.75 6.5-4.75S14.5 8 14.5 8s-2.4 4.75-6.5 4.75S1.5 8 1.5 8Z" />
+      <circle cx="8" cy="8" r="2" />
+    </Svg>
+  );
+}
+
+/** Nascondi la password: l'occhio barrato. */
+export function IconEyeOff(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M6.6 3.4A6.4 6.4 0 0 1 8 3.25C12.1 3.25 14.5 8 14.5 8a11 11 0 0 1-1.7 2.35M10.1 10.2A2 2 0 0 1 5.8 7.9M4 4.6C2.4 5.7 1.5 8 1.5 8s2.4 4.75 6.5 4.75a6 6 0 0 0 2.8-.7" />
+      <path d="m2.5 2.5 11 11" />
+    </Svg>
+  );
+}
+
 /** Il segno di FleetCare: una croce, sul quadrato arancio. */
 export function IconCross({ className = "size-4" }: IconProps) {
   return (
