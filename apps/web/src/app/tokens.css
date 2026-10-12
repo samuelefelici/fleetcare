@@ -133,7 +133,9 @@
    * vero; il mono ripiega su ui-monospace così com'è, che ha già la stessa
    * larghezza dei caratteri.
    */
-  --font-display: var(--font-barlow-condensed), "Arial Narrow", sans-serif;
+  --font-display:
+    var(--font-barlow-condensed), "Arial Narrow", "sans-serif-condensed", "Roboto Condensed",
+    sans-serif;
   --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, "SFMono-Regular", monospace;
 

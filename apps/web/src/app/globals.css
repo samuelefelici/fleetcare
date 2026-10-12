@@ -138,6 +138,39 @@ html:has(#contenuto) {
 }
 
 /*
+ * Il lato del modulo nella login: una griglia tecnica a passo 24 px, linee
+ * nel colore del testo al 3%, disegnata su un livello sotto il contenuto. Da
+ * 1024 px, dove la hero sta a destra, sfuma negli ultimi 96 px: la colonna non
+ * finisce su una linea netta, ma si scioglie nella sfumatura della hero.
+ */
+@utility griglia-tecnica {
+  position: relative;
+  isolation: isolate;
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-image:
+      linear-gradient(
+        to right,
+        color-mix(in srgb, var(--text-primary) 3%, transparent) 1px,
+        transparent 1px
+      ),
+      linear-gradient(
+        to bottom,
+        color-mix(in srgb, var(--text-primary) 3%, transparent) 1px,
+        transparent 1px
+      );
+    background-size: 24px 24px;
+    @media (width >= 64rem) {
+      mask-image: linear-gradient(to right, black calc(100% - 6rem), transparent);
+    }
+  }
+}
+
+/*
  * I volontari usano il telefono con i guanti: bersagli grandi al tocco.
  * Col mouse i controlli restano a 36 px, come chiede la specifica.
  */
